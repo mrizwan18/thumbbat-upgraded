@@ -17,7 +17,7 @@ const Login = () => {
 
   const handleLogin = async () => {
     try {
-      const res = await axios.post("http://localhost:5000/api/auth/login", { username, password });
+      const res = await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/login", { username, password });
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("username", res.data.username);
       navigate("/game");
@@ -28,7 +28,7 @@ const Login = () => {
 
   const handleSignup = async () => {
     try {
-      await axios.post("http://localhost:5000/api/auth/signup", { username, password });
+      await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/signup", { username, password });
       alert("✅ Signup Successful! Please log in.");
       setIsLogin(true);
     } catch (err) {

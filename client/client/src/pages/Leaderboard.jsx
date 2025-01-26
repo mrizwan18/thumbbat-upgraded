@@ -5,7 +5,7 @@ const Leaderboard = () => {
   const [players, setPlayers] = useState([]);
 
   useEffect(() => {
-    axios.get("http://localhost:5000/api/leaderboard").then((res) => {
+    axios.get("https://thumbbat-upgraded.onrender.com/api/leaderboard").then((res) => {
       setPlayers(res.data);
     });
   }, []);
