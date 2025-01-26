@@ -39,7 +39,7 @@ const Home = () => {
           animate={{ opacity: 1 }}
           transition={{ duration: 1.2, delay: 0.3 }}
         >
-          Angoo-thaa! Let's relive our favorite childhood game, Heads or tails. Let's Go.
+          Angoo-thaah! Let's relive our favorite childhood game, Heads or tails. Let's Go.
         </motion.p>
 
         {/* Action Button with animation */}
