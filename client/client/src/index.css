@@ -26,3 +26,16 @@
 .transform {
   transform: scale(1.1);
 }
+
+@keyframes moveBackground {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 100% 100%;
+  }
+}
+
+.animate-background {
+  animation: moveBackground 60s linear infinite;
+}
