@@ -6,31 +6,48 @@ const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [badWordsList, setBadWordsList] = useState([]);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    // Fetch the list of bad words when the component mounts
-    const fetchBadWords = async () => {
-      try {
-        const response = await axios.get('https://www.badwordsapi.com/api/v1/badwords');
-        setBadWordsList(response.data);
-      } catch (error) {
-        console.error("Error fetching bad words:", error);
-      }
-    };
-
-    fetchBadWords();
-  }, []);
-
-  const validateUsername = (username) => {
+  const validateUsername = async (username) => {
     if (username.length < 3 || username.length > 20) {
       return "Username must be between 3 and 20 characters.";
     }
-    if (badWordsList.some((word) => username.toLowerCase().includes(word))) {
-      return "Username contains inappropriate language. Please choose another one.";
+
+    try {
+      const response = await fetchBadWords(username);
+      const badWords = response.bad_words_list;
+
+      if (badWords.length > 0) {
+        return "Username contains inappropriate language. Please choose another one.";
+      }
+    } catch (error) {
+      console.error("Error checking bad words:", error);
+      return "There was an error checking the username. Please try again.";
     }
-    return null;
+
+    return null;  // Validation passed
+  };
+
+  // Fetch bad words from the API
+  const fetchBadWords = async (username) => {
+    const myHeaders = new Headers();
+    myHeaders.append("apikey", "ekDwcLAZDcnm9zA87TYalJxntYLM59qL");
+
+    const raw = username;
+
+    const requestOptions = {
+      method: "POST",
+      redirect: "follow",
+      headers: myHeaders,
+      body: raw,
+    };
+
+    const response = await fetch(
+      "https://api.apilayer.com/bad_words?censor_character=",
+      requestOptions
+    );
+    const result = await response.json();
+    return result; // returns the result, which includes the bad words list
   };
 
   const validatePassword = (password) => {
@@ -61,7 +78,7 @@ const Login = () => {
       return;
     }
 
-    const usernameError = validateUsername(username);
+    const usernameError = await validateUsername(username);
     if (usernameError) {
       alert(usernameError);
       return;
@@ -84,7 +101,7 @@ const Login = () => {
       return;
     }
 
-    const usernameError = validateUsername(username);
+    const usernameError = await validateUsername(username);
     if (usernameError) {
       alert(usernameError);
       return;
