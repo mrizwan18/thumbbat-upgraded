@@ -6,16 +6,67 @@ const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [badWordsList, setBadWordsList] = useState([]);
   const navigate = useNavigate();
 
-  // ✅ Redirect user to game if already logged in
   useEffect(() => {
-    if (localStorage.getItem("token")) {
-      navigate("/game");
+    // Fetch the list of bad words when the component mounts
+    const fetchBadWords = async () => {
+      try {
+        const response = await axios.get('https://www.badwordsapi.com/api/v1/badwords');
+        setBadWordsList(response.data);
+      } catch (error) {
+        console.error("Error fetching bad words:", error);
+      }
+    };
+
+    fetchBadWords();
+  }, []);
+
+  const validateUsername = (username) => {
+    if (username.length < 3 || username.length > 20) {
+      return "Username must be between 3 and 20 characters.";
     }
-  }, [navigate]);
+    if (badWordsList.some((word) => username.toLowerCase().includes(word))) {
+      return "Username contains inappropriate language. Please choose another one.";
+    }
+    return null;
+  };
+
+  const validatePassword = (password) => {
+    const lengthCheck = /.{8,}/;  // Minimum 8 characters
+    const upperCaseCheck = /[A-Z]/;  // At least one uppercase letter
+    const numberCheck = /[0-9]/;  // At least one number
+    const specialCharCheck = /[!@#$%^&*(),.?":{}|<>]/;  // At least one special character
+    
+    if (!lengthCheck.test(password)) {
+      return "Password must be at least 8 characters long.";
+    }
+    if (!upperCaseCheck.test(password)) {
+      return "Password must contain at least one uppercase letter.";
+    }
+    if (!numberCheck.test(password)) {
+      return "Password must contain at least one number.";
+    }
+    if (!specialCharCheck.test(password)) {
+      return "Password must contain at least one special character.";
+    }
+    return null;  // Validation passed
+  };
 
   const handleLogin = async () => {
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      alert(passwordError);
+      return;
+    }
+
+    const usernameError = validateUsername(username);
+    if (usernameError) {
+      alert(usernameError);
+      return;
+    }
+
     try {
       const res = await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/login", { username, password });
       localStorage.setItem("token", res.data.token);
@@ -27,6 +78,18 @@ const Login = () => {
   };
 
   const handleSignup = async () => {
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      alert(passwordError);
+      return;
+    }
+
+    const usernameError = validateUsername(username);
+    if (usernameError) {
+      alert(usernameError);
+      return;
+    }
+
     try {
       await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/signup", { username, password });
       alert("✅ Signup Successful! Please log in.");
