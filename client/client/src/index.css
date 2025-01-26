@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* Bounce Animation */
+@keyframes bounce {
+  0%, 20%, 50%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-10px);
+  }
+  60% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Image Transformation */
+.move-image {
+  transition: transform 0.5s ease-in-out;
+}
+
+.bounce {
+  animation: bounce 1s ease infinite;
+}
+
+.transform {
+  transform: scale(1.1);
+}
