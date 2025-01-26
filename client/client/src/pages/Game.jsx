@@ -8,7 +8,7 @@ import GameMoveImages from "../components/GameMoveImages";
 import opStartImg from '../assets/images/start-r.png';
 import plStartImg from '../assets/images/start.png';
 
-const socket = io("http://localhost:5000");
+const socket = io("https://thumbbat-upgraded.onrender.com/");
 
 const Game = () => {
   const navigate = useNavigate();
