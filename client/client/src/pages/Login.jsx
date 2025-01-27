@@ -53,7 +53,7 @@ const Login = () => {
     const lengthCheck = /.{8,}/;  // Minimum 8 characters
     const upperCaseCheck = /[A-Z]/;  // At least one uppercase letter
     const numberCheck = /[0-9]/;  // At least one number
-    const specialCharCheck = /[!@#$%^&*(),.?":{}|<>]/;  // At least one special character
+    const specialCharCheck = /[!@#$%^&*(),.?":/{}|<>]/;  // At least one special character
 
     if (!lengthCheck.test(password)) {
       return "Password must be at least 8 characters long.";

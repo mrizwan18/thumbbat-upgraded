@@ -28,6 +28,13 @@ const Game = () => {
   const [showPopup, setShowPopup] = useState(false); // ✅ Game over popup
   const [showInningsOverlay, setShowInningsOverlay] = useState(false); // ✅ Innings transition popup
   const [showGameStartPopup, setShowGameStartPopup] = useState(false); // ✅ New: Game start popup
+  const [playerMovesHistory, setPlayerMovesHistory] = useState([]);
+  const [botMovesHistory, setBotMovesHistory] = useState([]);
+  const [gameResults, setGameResults] = useState([]);
+
+  const updateGameResults = (result) => {
+    setGameResults((prevResults) => [...prevResults, result]);
+  };
 
   const restartGame = () => {
     setMode(null);
@@ -100,6 +107,67 @@ const Game = () => {
     }, 20000);
   };
 
+  // Example of a more sophisticated transition matrix considering move, inning, and score difference
+  const transitionMatrix = {
+    "batting": {
+      "scoreDifferencePositive": {
+        1: [0.1, 0.3, 0.2, 0.1, 0.2, 0.1],
+        2: [0.2, 0.1, 0.3, 0.1, 0.2, 0.2],
+        3: [0.3, 0.1, 0.2, 0.1, 0.2, 0.1],
+        4: [0.2, 0.2, 0.1, 0.3, 0.1, 0.1],
+        5: [0.2, 0.1, 0.3, 0.1, 0.2, 0.1],
+        6: [0.1, 0.3, 0.2, 0.1, 0.2, 0.1],
+      },
+      "scoreDifferenceNegative": {
+        1: [0.2, 0.1, 0.3, 0.2, 0.1, 0.1],
+        2: [0.2, 0.3, 0.1, 0.1, 0.2, 0.2],
+        3: [0.1, 0.2, 0.3, 0.1, 0.2, 0.2],
+        4: [0.3, 0.2, 0.1, 0.2, 0.1, 0.1],
+        5: [0.1, 0.3, 0.2, 0.2, 0.1, 0.2],
+        6: [0.2, 0.1, 0.3, 0.2, 0.1, 0.1],
+      },
+    },
+    "bowling": {
+      "scoreDifferencePositive": {
+        1: [0.2, 0.2, 0.2, 0.1, 0.1, 0.2],
+        2: [0.2, 0.1, 0.3, 0.1, 0.2, 0.1],
+        3: [0.2, 0.3, 0.1, 0.2, 0.1, 0.2],
+        4: [0.1, 0.2, 0.3, 0.1, 0.1, 0.2],
+        5: [0.3, 0.2, 0.1, 0.1, 0.2, 0.1],
+        6: [0.1, 0.3, 0.2, 0.1, 0.1, 0.2],
+      },
+      "scoreDifferenceNegative": {
+        1: [0.3, 0.1, 0.2, 0.2, 0.1, 0.1],
+        2: [0.2, 0.3, 0.1, 0.1, 0.2, 0.1],
+        3: [0.2, 0.1, 0.3, 0.2, 0.1, 0.1],
+        4: [0.1, 0.2, 0.2, 0.3, 0.1, 0.1],
+        5: [0.2, 0.1, 0.3, 0.1, 0.2, 0.1],
+        6: [0.1, 0.2, 0.1, 0.3, 0.2, 0.1],
+      },
+    },
+  };
+
+  const getBotMove = (playerMove, inning, scoreDifference) => {
+    const scoreDifferenceKey = scoreDifference > 0 ? "scoreDifferencePositive" : "scoreDifferenceNegative";
+
+    const transition = transitionMatrix[inning][scoreDifferenceKey];
+
+    const probabilities = transition[playerMove];
+
+    const randomValue = Math.random();
+
+    let cumulativeProbability = 0;
+    for (let i = 0; i < probabilities.length; i++) {
+      cumulativeProbability += probabilities[i];
+
+      if (randomValue < cumulativeProbability) {
+        return i + 1;
+      }
+    }
+
+    return 1;
+  };
+
   const startBotGame = () => {
     restartGame();
     setMode("bot");
@@ -118,10 +186,16 @@ const Game = () => {
     if (isGameOver) return; // ✅ Prevent moves after game ends
 
     setPlayerMove(move);
+    setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
 
     if (mode === "bot") {
-      const botMove = Math.floor(Math.random() * 6) + 1;
+      const scoreDifference = score.user - score.opponent;
+
+      const botMove = getBotMove(move, inning, scoreDifference);
       setOpponentMove(botMove);
+
+      setBotMovesHistory((prevHistory) => [...prevHistory, botMove]);
+
       handleGameLogic(move, botMove);
     } else {
       socket.emit("playerMove", { username: localStorage.getItem("username"), move });
@@ -198,18 +272,47 @@ const Game = () => {
     }
   };
 
+  const updateTransitionMatrix = () => {
+    for (let i = 0; i < playerMovesHistory.length; i++) {
+      const playerMove = playerMovesHistory[i];
+      const botMove = botMovesHistory[i];
+
+      if (inning === "batting" && botMove !== playerMove) {
+        transitionMatrix[inning]["scoreDifferencePositive"][playerMove][botMove] += 0.1;
+      } else if (inning === "bowling" && playerMove !== botMove) {
+        transitionMatrix[inning]["scoreDifferenceNegative"][playerMove][botMove] += 0.1;
+      }
+    }
+
+    normalizeTransitionMatrix();
+  };
+
+  const normalizeTransitionMatrix = () => {
+    Object.keys(transitionMatrix).forEach((inning) => {
+      Object.keys(transitionMatrix[inning]).forEach((scoreDiff) => {
+        Object.keys(transitionMatrix[inning][scoreDiff]).forEach((move) => {
+          const total = transitionMatrix[inning][scoreDiff][move].reduce((acc, val) => acc + val, 0);
+          transitionMatrix[inning][scoreDiff][move] = transitionMatrix[inning][scoreDiff][move].map((val) => val / total);
+        });
+      });
+    });
+  };
   const declareWinner = () => {
     console.log("winner")
     setIsGameOver(true);
-    setShowPopup(true); // ✅ Show game over popup
+    setShowPopup(true);
 
     if (score.user === score.opponent) {
       setWinner("🟡 It's a Draw!");
+      updateGameResults('draw');
     } else {
       setWinner(score.user > score.opponent ? localStorage.getItem("username") : opponent);
+      score.user > score.opponent ? updateGameResults('win') : updateGameResults('lose');
     }
+    updateTransitionMatrix();
+
     socket.emit("gameOver", {
-      username: localStorage.getItem("username"), 
+      username: localStorage.getItem("username"),
       score: score.user,
     });
   };
