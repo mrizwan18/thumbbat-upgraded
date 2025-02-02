@@ -3,5 +3,6 @@
 # Ignore node_modules inside client/client directory
 /client/client/node_modules/
 
+/server/node_modules/
 # Ignore .env inside client/client directory
 /client/client/.env
