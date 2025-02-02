@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
-const BACKEND_URL = "http://localhost:5000";
+const BACKEND_URL = process.env.API_URL;
 
 const Confirm = () => {
   const [loading, setLoading] = useState(true);
