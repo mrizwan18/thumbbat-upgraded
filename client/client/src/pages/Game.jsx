@@ -306,7 +306,8 @@ const Game = () => {
       setWinner("🟡 It's a Draw!");
       updateGameResults('draw');
     } else {
-      setWinner(score.user > score.opponent ? localStorage.getItem("username") : opponent);
+      winnerMessage = score.user > score.opponent ? localStorage.getItem("username") : opponent;
+      setWinner(winnerMessage + " Wins");
       score.user > score.opponent ? updateGameResults('win') : updateGameResults('lose');
     }
     updateTransitionMatrix();
@@ -392,7 +393,7 @@ const Game = () => {
         {showPopup && (
           <div className="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center">
             <div className="bg-gray-800 p-6 rounded-lg shadow-lg text-center max-w-sm">
-              <h3 className="text-3xl font-bold text-yellow-400">{winner} Wins! 🏆</h3>
+              <h3 className="text-3xl font-bold text-yellow-400">{winner}🏆</h3>
               <p className="text-lg mt-2">Final Score: {score.user} - {score.opponent}</p>
 
               {/* ✅ Exit & Restart Buttons */}
