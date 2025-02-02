@@ -2,11 +2,14 @@ import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css"; // Import styles for the notifications
+import "react-toastify/dist/ReactToastify.css";
+import "dotenv"
+const BACKEND_URL = "http://localhost:5000";
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(""); 
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -25,7 +28,7 @@ const Login = () => {
       console.error("Error checking bad words:", error);
       return "There was an error checking the username. Please try again.";
     }
-    return null;  // Validation passed
+    return null;
   };
 
   const fetchBadWords = async (username) => {
@@ -50,10 +53,10 @@ const Login = () => {
   };
 
   const validatePassword = (password) => {
-    const lengthCheck = /.{8,}/;  // Minimum 8 characters
-    const upperCaseCheck = /[A-Z]/;  // At least one uppercase letter
-    const numberCheck = /[0-9]/;  // At least one number
-    const specialCharCheck = /[!@#$%^&*(),.?":/{}|<>]/;  // At least one special character
+    const lengthCheck = /.{8,}/;
+    const upperCaseCheck = /[A-Z]/;
+    const numberCheck = /[0-9]/;
+    const specialCharCheck = /[!@#$%^&*(),.?":/{}|<>]/;
 
     if (!lengthCheck.test(password)) {
       return "Password must be at least 8 characters long.";
@@ -67,7 +70,7 @@ const Login = () => {
     if (!specialCharCheck.test(password)) {
       return "Password must contain at least one special character.";
     }
-    return null;  // Validation passed
+    return null;
   };
 
   const handleLogin = async () => {
@@ -85,13 +88,14 @@ const Login = () => {
 
     setLoading(true);  // Start loading
     try {
-      const res = await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/login", { username, password });
+      const res = await axios.post(`${BACKEND_URL}/api/auth/login`, { username, password });
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("username", res.data.username);
       toast.success("✅ Login successful!");
       navigate("/game");
     } catch (err) {
-      toast.error("❌ Login failed! Please check your credentials.");
+      console.log(err)
+      toast.error("❌ " + err.response.data.error);
     } finally {
       setLoading(false);  // Stop loading
     }
@@ -110,13 +114,19 @@ const Login = () => {
       return;
     }
 
-    setLoading(true);  // Start loading
+    if (!email || !/\S+@\S+\.\S+/.test(email)) {
+      toast.error("❌ Please enter a valid email address.");
+      return;
+    }
+
+    setLoading(true);
     try {
-      await axios.post("https://thumbbat-upgraded.onrender.com/api/auth/signup", { username, password });
-      toast.success("✅ Signup successful! Please log in.");
+      // Send email along with username and password to the backend for signup
+      await axios.post(`${BACKEND_URL}/api/auth/signup`, { username, password, email });
+      toast.success("✅ Signup successful! Please check your email to confirm your account.");
       setIsLogin(true);
     } catch (err) {
-      toast.error("❌ Signup failed! Username may already exist.");
+      toast.error("❌ Signup failed! Username or email may already exist.");
     } finally {
       setLoading(false);  // Stop loading
     }
@@ -151,6 +161,18 @@ const Login = () => {
           onChange={(e) => setUsername(e.target.value)}
           disabled={loading}
         />
+        
+        {/* Add email field in signup form */}
+        {!isLogin && (
+          <input
+            type="email"
+            placeholder="Email"
+            className="w-full p-3 mb-4 rounded-lg bg-gray-700 border border-gray-600 focus:ring-2 focus:ring-blue-500"
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+          />
+        )}
+
         <input
           type="password"
           placeholder="Password"
