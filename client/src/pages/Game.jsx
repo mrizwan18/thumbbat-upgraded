@@ -310,7 +310,7 @@ const Game = () => {
     if (userScore === opponentScore) {
       setWinner(winnerMessage);
     } else {
-      const winnerMessage = userScore > opponentScore ? localStorage.getItem("username") : opponent;
+      winnerMessage = userScore > opponentScore ? localStorage.getItem("username") : opponent;
       setWinner(winnerMessage + " Wins");
       result = userScore > opponentScore ? "win" : "lose";
     }
