@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { motion } from "framer-motion";
 
+const BACKEND_URL = import.meta.env.VITE_API_URL;
+
 const Leaderboard = () => {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,7 +11,7 @@ const Leaderboard = () => {
   useEffect(() => {
     // Fetch leaderboard data
     axios
-      .get("https://thumbbat-upgraded.onrender.com/api/leaderboard")
+      .get(`${BACKEND_URL}/api/leaderboard`)
       .then((res) => {
         setPlayers(res.data);
         setLoading(false);
@@ -31,7 +33,7 @@ const Leaderboard = () => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-800 text-white px-6 py-12">
       <motion.h2
-        className="text-3xl md:text-4xl font-semibold text-white mb-6"
+        className="text-4xl font-semibold text-white mb-6"
         initial={{ opacity: 0, y: -30 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
@@ -39,37 +41,56 @@ const Leaderboard = () => {
         🏆 Leaderboard
       </motion.h2>
 
-      <motion.ul
-        className="w-full max-w-3xl bg-gray-700 p-8 rounded-lg shadow-md"
+      <motion.div
+        className="w-full max-w-4xl bg-gray-700 p-8 rounded-lg shadow-md overflow-y-auto"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 1 }}
+        style={{ maxHeight: "70vh" }} // Limit height for scrollable area
       >
-        {players.map((player, index) => (
-          <motion.li
-            key={index}
-            className={`flex items-center justify-between p-4 mb-4 rounded-md border ${
-              index < 3
-                ? "border-yellow-400 bg-gray-800 text-white"
-                : "border-gray-600 bg-gray-700 text-gray-300"
-            }`}
-            whileHover={{ scale: 1.02 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="flex items-center space-x-4">
-              <div
-                className={`w-8 h-8 rounded-full ${
-                  index < 3 ? "bg-yellow-400" : "bg-gray-600"
-                } flex items-center justify-center`}
-              >
-                <span className="font-semibold text-xl">{index + 1}</span>
-              </div>
-              <span className="text-lg font-medium">{player.username}</span>
-            </div>
-            <span className="text-xl font-semibold">{player.highScore}</span>
-          </motion.li>
-        ))}
-      </motion.ul>
+        <table className="w-full table-auto">
+          <thead>
+            <tr className="text-lg text-white font-bold">
+              <th className="p-3 text-left">Rank</th>
+              <th className="p-3 text-left">Username</th>
+              <th className="p-3 text-left">High Score</th>
+              <th className="p-3 text-left">Win Percentage</th>
+            </tr>
+          </thead>
+          <tbody>
+            {players.slice(0, 10).map((player, index) => {
+              let bannerClass = "";
+              if (index === 0) bannerClass = "bg-gradient-to-r from-yellow-400 to-yellow-600";
+              else if (index === 1) bannerClass = "bg-gradient-to-r from-gray-400 to-gray-600";
+              else if (index === 2) bannerClass = "bg-gradient-to-r from-orange-400 to-orange-600";
+
+              return (
+                <motion.tr
+                  key={index}
+                  className={`${
+                    index < 3
+                      ? "bg-gray-800 text-white"
+                      : "bg-gray-700 text-gray-300"
+                  } border-b hover:bg-gray-600`}
+                  whileHover={{ scale: 1.02 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <td className="p-4">
+                    <div
+                      className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-semibold text-xl ${bannerClass}`}
+                    >
+                      {index + 1}
+                    </div>
+                  </td>
+                  <td className="p-4">{player.username}</td>
+                  <td className="p-4 text-center">{player.highScore}</td>
+                  <td className="p-4 text-center">{player.winPercentage}%</td>
+                </motion.tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </motion.div>
     </div>
   );
 };
