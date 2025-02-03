@@ -306,7 +306,7 @@ const Game = () => {
       setWinner("🟡 It's a Draw!");
       updateGameResults('draw');
     } else {
-      winnerMessage = score.user > score.opponent ? localStorage.getItem("username") : opponent;
+      const winnerMessage = score.user > score.opponent ? localStorage.getItem("username") : opponent;
       setWinner(winnerMessage + " Wins");
       score.user > score.opponent ? updateGameResults('win') : updateGameResults('lose');
     }

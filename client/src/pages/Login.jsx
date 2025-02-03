@@ -3,8 +3,8 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import "dotenv"
-const BACKEND_URL = import.meta.env.VITE_API_URL;
+
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -121,14 +121,14 @@ const Login = () => {
 
     setLoading(true);
     try {
-      // Send email along with username and password to the backend for signup
       await axios.post(`${BACKEND_URL}/api/auth/signup`, { username, password, email });
       toast.success("✅ Signup successful! Please check your email to confirm your account.");
       setIsLogin(true);
     } catch (err) {
-      toast.error("❌ Signup failed! Username or email may already exist.");
+      console.error("Signup error:", err.response?.data);  // Log the full error response
+      toast.error(`❌ ${err.response?.data?.error || "An error occurred during signup"}`);
     } finally {
-      setLoading(false);  // Stop loading
+      setLoading(false);
     }
   };
 

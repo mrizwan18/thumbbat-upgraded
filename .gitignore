@@ -1,7 +1,7 @@
 /server/.env
 /server/node_modules/
-# Ignore node_modules inside client/client directory
-/client/client/node_modules/
+# Ignore node_modules inside client directory
+/client/node_modules/
 
-# Ignore .env inside client/client directory
-/client/client/.env
+# Ignore .env inside client directory
+/client/.env

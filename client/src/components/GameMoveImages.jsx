@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { getPlayerMoveImage, getOpponentMoveImage } from "../helpers/getMoveImage.js"; // Import helper methods
+import { getPlayerMoveImage, getOpponentMoveImage } from "../helpers/getMoveImage"; // Import helper methods
 
 const GameMoveImages = ({ move, isPlayer, startImage }) => {
   const [imageAnimating, setImageAnimating] = useState(false); // Track animation state

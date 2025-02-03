@@ -5,7 +5,10 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const User = require("../models/User");
 
-const FRONTEND_URL = process.env.CLIENT_URL;
+const FRONTEND_URL =
+  process.env.NODE_ENV === "production"
+    ? process.env.PROD_FRONTEND_URL
+    : process.env.DEV_FRONTEND_URL;
 
 const router = express.Router();
 
@@ -125,12 +128,10 @@ router.post("/login", async (req, res) => {
   if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
   if (!user.isConfirmed) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "Confirmation Pending! Please click on the confirmation link in the email sent to you.",
-      });
+    return res.status(400).json({
+      error:
+        "Confirmation Pending! Please click on the confirmation link in the email sent to you.",
+    });
   }
   const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
     expiresIn: "1d",
