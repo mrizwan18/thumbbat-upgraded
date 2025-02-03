@@ -86,19 +86,33 @@ io.on("connection", (socket) => {
       delete users[socket.id];
     }
   });
-  // ✅ Store user score on game over
+
   socket.on("gameOver", async (data) => {
     try {
       const user = await User.findOne({ username: data.username });
+  
       if (user) {
-        await Score.create({ userId: user._id, score: data.score });
+        console.log(data);
 
-        if (data.score > user.highScore) {
-          user.highScore = data.score;
-          await user.save();
+        await Score.create({ userId: user._id, score: data.userScore });
+  
+        if (data.userScore > user.highScore) {
+          user.highScore = data.userScore;
         }
+  
+        if (data.userScore > data.opponentScore) {
+          user.wins += 1;
+        } else if (data.userScore < data.opponentScore) {
+          user.losses += 1;
+        }
+  
+        const totalGames = user.wins + user.losses;
+        user.winPercentage = totalGames > 0 ? (user.wins / totalGames) * 100 : 0;
+  
+        console.log(user);
+        await user.save();
       }
-
+  
       // ✅ Mark player as idle after game ends
       if (users[socket.id]) {
         users[socket.id].status = "idle";
@@ -108,6 +122,5 @@ io.on("connection", (socket) => {
       console.error("❌ Error storing score:", error);
     }
   });
-});
-
+})
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

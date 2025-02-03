@@ -8,7 +8,9 @@ import GameMoveImages from "../components/GameMoveImages";
 import opStartImg from '../assets/images/start-r.png';
 import plStartImg from '../assets/images/start.png';
 
-const socket = io("https://thumbbat-upgraded.onrender.com/");
+const BACKEND_URL = import.meta.env.VITE_API_URL;
+
+const socket = io(`${BACKEND_URL}/`);
 
 const Game = () => {
   const navigate = useNavigate();
@@ -213,7 +215,7 @@ const Game = () => {
 
           // ✅ If second innings & score surpasses first innings, end game
           if (secondInningStarted && newScore > prev.firstInningScore) {
-            declareWinner();
+            declareWinner(newScore, score.opponent);
           }
 
           return { ...prev, user: newScore };
@@ -234,6 +236,7 @@ const Game = () => {
           }, 3000);
         } else {
           // ✅ Second innings over, check scores and declare winner
+          setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
           declareWinner();
         }
       }
@@ -245,7 +248,7 @@ const Game = () => {
 
           // ✅ If second innings & score surpasses first innings, end game
           if (secondInningStarted && newOpponentScore > prev.firstInningScore) {
-            declareWinner();
+            declareWinner(score.user, newOpponentScore);
           }
 
           return { ...prev, opponent: newOpponentScore };
@@ -266,7 +269,8 @@ const Game = () => {
           }, 3000);
         } else {
           // ✅ Second innings over, check scores and declare winner
-          declareWinner();
+          setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
+          declareWinner(score.user, score.opponent);
         }
       }
     }
@@ -297,26 +301,29 @@ const Game = () => {
       });
     });
   };
-  const declareWinner = () => {
-    console.log("winner")
+  const declareWinner = (userScore, opponentScore) => {
     setIsGameOver(true);
     setShowPopup(true);
 
-    if (score.user === score.opponent) {
-      setWinner("🟡 It's a Draw!");
-      updateGameResults('draw');
+    let result = "draw";
+    let winnerMessage = "🟡 It's a Draw!";
+    if (userScore === opponentScore) {
+      setWinner(winnerMessage);
     } else {
-      const winnerMessage = score.user > score.opponent ? localStorage.getItem("username") : opponent;
+      const winnerMessage = userScore > opponentScore ? localStorage.getItem("username") : opponent;
       setWinner(winnerMessage + " Wins");
-      score.user > score.opponent ? updateGameResults('win') : updateGameResults('lose');
+      result = userScore > opponentScore ? "win" : "lose";
     }
+    
+    updateGameResults(result);
     updateTransitionMatrix();
 
     socket.emit("gameOver", {
       username: localStorage.getItem("username"),
-      score: score.user,
+      userScore: userScore,
+      opponentScore: opponentScore
     });
-  };
+};
 
   return (
     <div className="bg-gray-900 text-white min-h-screen">
