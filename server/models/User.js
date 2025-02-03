@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema({
   confirmationToken: {
     type: String,
   },
+  highScore: {
+    type: Number,
+    default: 0
+  }
 });
 
 module.exports = mongoose.model("User", userSchema);
