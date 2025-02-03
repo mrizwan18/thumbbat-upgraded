@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import "dotenv"
-const BACKEND_URL = process.env.API_URL;
+const BACKEND_URL = import.meta.env.VITE_API_URL;
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
