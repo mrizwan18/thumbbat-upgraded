@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 55, "column": 0}, "map": {"version":3,"sources":["file:///Users/kingoros/Personal%20Projects/thumbbat-upgraded/src/app/api/auth/signup/route.ts"],"sourcesContent":["import { NextResponse } from \"next/server\";\n\nexport async function POST(request: Request) {\n  try {\n    const { username, email, password } = await request.json();\n\n    // TODO: Add your actual signup logic here\n    \n    if (username && email && password) {\n      return NextResponse.json({\n        message: \"Signup successful\",\n      });\n    } else {\n      return NextResponse.json(\n        { error: \"Missing required fields\" },\n        { status: 400 }\n      );\n    }\n  } catch (error) {\n    console.error(\"Signup error:\", error);\n    return NextResponse.json(\n      { error: \"Internal server error\" },\n      { status: 500 }\n    );\n  }\n}\n"],"names":[],"mappings":";;;AAAA;;AAEO,eAAe,KAAK,OAAgB;IACzC,IAAI;QACF,MAAM,EAAE,QAAQ,EAAE,KAAK,EAAE,QAAQ,EAAE,GAAG,MAAM,QAAQ,IAAI;QAExD,0CAA0C;QAE1C,IAAI,YAAY,SAAS,UAAU;YACjC,OAAO,gIAAA,CAAA,eAAY,CAAC,IAAI,CAAC;gBACvB,SAAS;YACX;QACF,OAAO;YACL,OAAO,gIAAA,CAAA,eAAY,CAAC,IAAI,CACtB;gBAAE,OAAO;YAA0B,GACnC;gBAAE,QAAQ;YAAI;QAElB;IACF,EAAE,OAAO,OAAO;QACd,QAAQ,KAAK,CAAC,iBAAiB;QAC/B,OAAO,gIAAA,CAAA,eAAY,CAAC,IAAI,CACtB;YAAE,OAAO;QAAwB,GACjC;YAAE,QAAQ;QAAI;IAElB;AACF"}},
-    {"offset": {"line": 84, "column": 0}, "map": {"version":3,"sources":[],"names":[],"mappings":"A"}}]
-}
