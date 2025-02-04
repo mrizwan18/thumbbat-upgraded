@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 23, "column": 0}, "map": {"version":3,"sources":["turbopack://[project]/src/middleware.ts"],"sourcesContent":["import { NextResponse } from \"next/server\";\nimport type { NextRequest } from \"next/server\";\n\nexport function middleware(request: NextRequest) {\n  // Check for token in localStorage\n  if (request.nextUrl.pathname.startsWith(\"/game\")) {\n    const token = request.cookies.get(\"token\");\n    if (!token) {\n      return NextResponse.redirect(new URL(\"/login\", request.url));\n    } \n  }\n\n  return NextResponse.next();\n}\n\nexport const config = {\n  matcher: [\"/game/:path*\"],\n};\n"],"names":[],"mappings":";;;;AAAA;AAAA;;AAGO,SAAS,WAAW,OAAoB;IAC7C,kCAAkC;IAClC,IAAI,QAAQ,OAAO,CAAC,QAAQ,CAAC,UAAU,CAAC,UAAU;QAChD,MAAM,QAAQ,QAAQ,OAAO,CAAC,GAAG,CAAC;QAClC,IAAI,CAAC,OAAO;YACV,OAAO,qLAAA,CAAA,eAAY,CAAC,QAAQ,CAAC,IAAI,IAAI,UAAU,QAAQ,GAAG;QAC5D;IACF;IAEA,OAAO,qLAAA,CAAA,eAAY,CAAC,IAAI;AAC1B;AAEO,MAAM,SAAS;IACpB,SAAS;QAAC;KAAe;AAC3B"}},
+    {"offset": {"line": 45, "column": 0}, "map": {"version":3,"sources":[],"names":[],"mappings":"A"}}]
+}
