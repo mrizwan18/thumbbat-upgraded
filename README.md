@@ -24,6 +24,7 @@ EMAIL_PASS=your_gmail_app_password
 NEXT_PUBLIC_SOCKET_URL=http://localhost:5001
 DEV_FRONTEND_URL=http://localhost:3000
 PROD_FRONTEND_URL=your_production_url
+NEXT_PUBLIC_FILTER_USERNAME=false
 ```
 
 `server/.env`:
@@ -36,6 +37,7 @@ EMAIL_PASS=your_gmail_app_password
 NEXT_PUBLIC_SOCKET_URL=http://localhost:5001
 DEV_FRONTEND_URL=http://localhost:3000
 PROD_FRONTEND_URL=your_production_url
+NEXT_PUBLIC_FILTER_USERNAME=false
 ```
 
 ## Installation
@@ -57,7 +59,7 @@ npm install
 
 You'll need to run both the client and socket server in separate terminal windows.
 
-1. Start the Socket.IO server while staying in the root directory:
+1. Start the Socket.IO server while staying in the /server directory:
 
 ```bash
 npm run socket-server

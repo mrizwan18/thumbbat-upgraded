@@ -5,8 +5,10 @@ import axios, { AxiosError } from "axios";
 import { useRouter } from "next/navigation";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { env } from "../../env";
 
 const BACKEND_URL = "/api";
+const FILTER_USERNAME = env.NEXT_PUBLIC_FILTER_USERNAME;
 
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -20,17 +22,19 @@ const Login = () => {
     if (username.length < 3 || username.length > 20) {
       return "Username must be between 3 and 20 characters.";
     }
-    try {
-      const response = await fetchBadWords(username);
-      const badWords = response.bad_words_list;
-      if (badWords.length > 0) {
-        return "Username contains inappropriate language. Please choose another one.";
+    if (FILTER_USERNAME) {
+      try {
+        const response = await fetchBadWords(username);
+        const badWords = response.bad_words_list;
+        if (badWords.length > 0) {
+          return "Username contains inappropriate language. Please choose another one.";
+        }
+      } catch (error) {
+        console.error("Error checking bad words:", error);
+        return "There was an error checking the username. Please try again.";
       }
-    } catch (error) {
-      console.error("Error checking bad words:", error);
-      return "There was an error checking the username. Please try again.";
+      return null;
     }
-    return null;
   };
 
   const fetchBadWords = async (username: string) => {

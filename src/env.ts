@@ -8,6 +8,10 @@ const envSchema = z.object({
   NEXT_PUBLIC_SOCKET_URL: z.string().url(),
   DEV_FRONTEND_URL: z.string().url(),
   PROD_FRONTEND_URL: z.string().url(),
+  NEXT_PUBLIC_FILTER_USERNAME: z.preprocess(
+    (val) => (val === "true" ? true : val === "false" ? false : val),
+    z.boolean()
+  ),
 });
 
 export const env = envSchema.parse({
@@ -18,4 +22,5 @@ export const env = envSchema.parse({
   NEXT_PUBLIC_SOCKET_URL: process.env.NEXT_PUBLIC_SOCKET_URL,
   DEV_FRONTEND_URL: process.env.DEV_FRONTEND_URL,
   PROD_FRONTEND_URL: process.env.PROD_FRONTEND_URL,
+  NEXT_PUBLIC_FILTER_USERNAME: process.env.NEXT_PUBLIC_FILTER_USERNAME,
 });
