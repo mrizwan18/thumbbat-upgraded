@@ -1,13 +1,9 @@
 import User from "@/server/models/User";
 import { NextResponse } from "next/server";
-import dbConnect from "@/server/config/db";
+import { withDb } from "@/src/utils/withDb";
 
-export async function GET() {
+export const GET = withDb(async () => {
   try {
-    // Establish database connection first
-    await dbConnect();
-
-    // Now check database connection
     if (!User?.db?.readyState) {
       console.error("Database connection not established");
       return NextResponse.json(
@@ -62,7 +58,7 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+});
 
 // Handle OPTIONS request for CORS preflight
 export async function OPTIONS() {
