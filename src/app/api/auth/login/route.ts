@@ -2,11 +2,10 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "@/server/models/User";
-import dbConnect from "@/server/config/db";
+import { withDb } from "@/src/utils/withDb";
 
-export async function POST(request: Request) {
+export const POST = withDb(async (request: Request) => {
   try {
-    await dbConnect();
     const { username, password } = await request.json();
 
     if (!username || !password) {
@@ -58,4 +57,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
+});
