@@ -100,7 +100,7 @@ const Leaderboard = () => {
                     </td>
                     <td className="p-4">{player.username}</td>
                     <td className="p-4 text-center">{player.highScore}</td>
-                    <td className="p-4 text-center">{player.winPercentage.toFixed(2)}%</td>
+                    <td className="p-4 text-center">{Math.round(player.winPercentage)}%</td>
                   </motion.tr>
                 );
               })}
