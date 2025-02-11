@@ -21,14 +21,15 @@ const GameMoveImages = ({
     // Start bounce animation if move is selected
     if (move) {
       setImageAnimating(true);
+      setFinalMoveImage(null);
 
       // After 2 bounces, switch to the actual move image
       setTimeout(() => {
         setImageAnimating(false);
         setFinalMoveImage(
           isPlayer ? getPlayerMoveImage(move) : getOpponentMoveImage(move)
-        ); // Update with the selected move image
-      }, 1000); // 1000ms = duration of 2 bounces
+        );
+      }, 1000);
     }
   }, [move, isPlayer]);
 
