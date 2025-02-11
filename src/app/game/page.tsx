@@ -272,12 +272,11 @@ const Game = () => {
               }, 1000);
             }
 
-
             return { ...prev, user: newScore };
           });
         } else {
           setTimeout(() => {
-          // ✅ If moves are the same, end the innings
+            // ✅ If moves are the same, end the innings
             setOpponentMove(null);
             setPlayerMove(null);
             if (!secondInningStarted) {
@@ -295,7 +294,7 @@ const Game = () => {
               setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
               declareWinner(score.user, score.opponent);
             }
-          },1000);
+          }, 1000);
         }
       } else {
         // ✅ If moves are different, update opponent's score
@@ -315,7 +314,6 @@ const Game = () => {
               }, 1000);
             }
 
-
             return { ...prev, opponent: newOpponentScore };
           });
         } else {
@@ -325,7 +323,10 @@ const Game = () => {
             setPlayerMove(null);
             if (!secondInningStarted) {
               // ✅ If first innings ends when the user was bowling, start second innings correctly
-              setScore((prev) => ({ ...prev, firstInningScore: prev.opponent }));
+              setScore((prev) => ({
+                ...prev,
+                firstInningScore: prev.opponent,
+              }));
               setShowInningsOverlay(true);
 
               setTimeout(() => {
@@ -338,14 +339,13 @@ const Game = () => {
               setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
               declareWinner(score.user, score.opponent);
             }
-          },1000);
+          }, 1000);
         }
       }
     };
     // Set animation completion handlers
     playerAnimationComplete = false;
     opponentAnimationComplete = false;
-
 
     // Trigger animations and wait for completion
     setTimeout(() => {

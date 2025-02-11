@@ -7,12 +7,10 @@ const GameMoveImages = ({
   move,
   isPlayer,
   startImage,
-  onAnimationComplete,
 }: {
   move: number;
   isPlayer: boolean;
   startImage: string;
-  onAnimationComplete?: () => void;
 }) => {
   const [imageAnimating, setImageAnimating] = useState(false); // Track animation state
   const [finalMoveImage, setFinalMoveImage] = useState<
@@ -31,12 +29,9 @@ const GameMoveImages = ({
         setFinalMoveImage(
           isPlayer ? getPlayerMoveImage(move) : getOpponentMoveImage(move)
         );
-        if (onAnimationComplete) {
-          onAnimationComplete();
-        }
       }, 1000);
     }
-  }, [move, isPlayer, onAnimationComplete]);
+  }, [move, isPlayer]);
 
   const renderImage = () => {
     const imageSrc =
