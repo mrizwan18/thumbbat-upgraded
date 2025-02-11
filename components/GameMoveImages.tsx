@@ -7,10 +7,12 @@ const GameMoveImages = ({
   move,
   isPlayer,
   startImage,
+  onAnimationComplete,
 }: {
   move: number;
   isPlayer: boolean;
   startImage: string;
+  onAnimationComplete?: () => void;
 }) => {
   const [imageAnimating, setImageAnimating] = useState(false); // Track animation state
   const [finalMoveImage, setFinalMoveImage] = useState<
@@ -21,16 +23,20 @@ const GameMoveImages = ({
     // Start bounce animation if move is selected
     if (move) {
       setImageAnimating(true);
+      setFinalMoveImage(null);
 
       // After 2 bounces, switch to the actual move image
       setTimeout(() => {
         setImageAnimating(false);
         setFinalMoveImage(
           isPlayer ? getPlayerMoveImage(move) : getOpponentMoveImage(move)
-        ); // Update with the selected move image
-      }, 1000); // 1000ms = duration of 2 bounces
+        );
+        if (onAnimationComplete) {
+          onAnimationComplete();
+        }
+      }, 1000);
     }
-  }, [move, isPlayer]);
+  }, [move, isPlayer, onAnimationComplete]);
 
   const renderImage = () => {
     const imageSrc =

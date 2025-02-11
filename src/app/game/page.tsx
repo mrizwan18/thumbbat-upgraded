@@ -251,82 +251,112 @@ const Game = () => {
 
   const handleGameLogic = (userMove: number, opponentMove: number) => {
     if (!userMove || !opponentMove || isGameOver) return;
+    let playerAnimationComplete = false;
+    let opponentAnimationComplete = false;
+    const checkAndProcessMoves = () => {
+      if (!playerAnimationComplete || !opponentAnimationComplete) return;
+      if (inning === "batting") {
+        // ✅ If moves are different, update batting player's score
+        if (userMove !== opponentMove) {
+          setScore((prev) => {
+            const newScore = prev.user + userMove;
 
-    if (inning === "batting") {
-      // ✅ If moves are different, update batting player's score
-      if (userMove !== opponentMove) {
-        setScore((prev) => {
-          const newScore = prev.user + userMove;
+            // ✅ If second innings & score surpasses first innings, end game
+            if (
+              secondInningStarted &&
+              prev.firstInningScore !== null &&
+              newScore > prev.firstInningScore
+            ) {
+              setTimeout(() => {
+                declareWinner(newScore, score.opponent);
+              }, 1000);
+            }
 
-          // ✅ If second innings & score surpasses first innings, end game
-          if (
-            secondInningStarted &&
-            prev.firstInningScore !== null &&
-            newScore > prev.firstInningScore
-          ) {
-            declareWinner(newScore, score.opponent);
-          }
 
-          return { ...prev, user: newScore };
-        });
-      } else {
-        // ✅ If moves are the same, end the innings
-        setOpponentMove(null);
-        setPlayerMove(null);
-        if (!secondInningStarted) {
-          // ✅ First innings over, store the score and switch innings
-          setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
-          setShowInningsOverlay(true);
-
-          setTimeout(() => {
-            setInning("bowling"); // Switch innings
-            setSecondInningStarted(true);
-            setShowInningsOverlay(false);
-          }, 3000);
+            return { ...prev, user: newScore };
+          });
         } else {
-          // ✅ Second innings over, check scores and declare winner
-          setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
-          declareWinner(score.user, score.opponent);
+          setTimeout(() => {
+          // ✅ If moves are the same, end the innings
+            setOpponentMove(null);
+            setPlayerMove(null);
+            if (!secondInningStarted) {
+              // ✅ First innings over, store the score and switch innings
+              setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
+              setShowInningsOverlay(true);
+
+              setTimeout(() => {
+                setInning("bowling"); // Switch innings
+                setSecondInningStarted(true);
+                setShowInningsOverlay(false);
+              }, 3000);
+            } else {
+              // ✅ Second innings over, check scores and declare winner
+              setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
+              declareWinner(score.user, score.opponent);
+            }
+          },1000);
+        }
+      } else {
+        // ✅ If moves are different, update opponent's score
+
+        if (userMove !== opponentMove) {
+          setScore((prev) => {
+            const newOpponentScore = prev.opponent + opponentMove;
+
+            // ✅ If second innings & score surpasses first innings, end game
+            if (
+              secondInningStarted &&
+              prev.firstInningScore !== null &&
+              newOpponentScore > prev.firstInningScore
+            ) {
+              setTimeout(() => {
+                declareWinner(score.user, newOpponentScore);
+              }, 1000);
+            }
+
+
+            return { ...prev, opponent: newOpponentScore };
+          });
+        } else {
+          setTimeout(() => {
+            // ✅ If moves are same, end the innings
+            setOpponentMove(null);
+            setPlayerMove(null);
+            if (!secondInningStarted) {
+              // ✅ If first innings ends when the user was bowling, start second innings correctly
+              setScore((prev) => ({ ...prev, firstInningScore: prev.opponent }));
+              setShowInningsOverlay(true);
+
+              setTimeout(() => {
+                setInning("batting"); // Switch innings
+                setSecondInningStarted(true);
+                setShowInningsOverlay(false);
+              }, 3000);
+            } else {
+              // ✅ Second innings over, check scores and declare winner
+              setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
+              declareWinner(score.user, score.opponent);
+            }
+          },1000);
         }
       }
-    } else {
-      // ✅ If moves are different, update opponent's score
-      if (userMove !== opponentMove) {
-        setScore((prev) => {
-          const newOpponentScore = prev.opponent + opponentMove;
+    };
+    // Set animation completion handlers
+    playerAnimationComplete = false;
+    opponentAnimationComplete = false;
 
-          // ✅ If second innings & score surpasses first innings, end game
-          if (
-            secondInningStarted &&
-            prev.firstInningScore !== null &&
-            newOpponentScore > prev.firstInningScore
-          ) {
-            declareWinner(score.user, newOpponentScore);
-          }
 
-          return { ...prev, opponent: newOpponentScore };
-        });
-      } else {
-        // ✅ If moves are same, end the innings
-        setOpponentMove(null);
-        setPlayerMove(null);
-        if (!secondInningStarted) {
-          // ✅ If first innings ends when the user was bowling, start second innings correctly
-          setScore((prev) => ({ ...prev, firstInningScore: prev.opponent }));
-          setShowInningsOverlay(true);
+    // Trigger animations and wait for completion
+    setTimeout(() => {
+      playerAnimationComplete = true;
+      checkAndProcessMoves();
+    }, 1000);
 
-          setTimeout(() => {
-            setInning("batting"); // Switch innings
-            setSecondInningStarted(true);
-            setShowInningsOverlay(false);
-          }, 3000);
-        } else {
-          // ✅ Second innings over, check scores and declare winner
-          setScore((prev) => ({ ...prev, firstInningScore: prev.user }));
-          declareWinner(score.user, score.opponent);
-        }
-      }
-    }
+    setTimeout(() => {
+      opponentAnimationComplete = true;
+      checkAndProcessMoves();
+    }, 1000);
   };
 
   const updateTransitionMatrix = () => {
