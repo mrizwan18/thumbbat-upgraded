@@ -1,6 +1,6 @@
 import User from "@/server/models/User";
 import { NextResponse } from "next/server";
-import dbConnect from "@/server/config/db";
+import { withDb } from "@/src/utils/withDb";
 
 // Add CORS headers helper function
 function corsHeaders() {
@@ -16,9 +16,8 @@ export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders() });
 }
 
-export async function GET(request: Request) {
+export const GET = withDb(async (request: Request) => {
   try {
-    await dbConnect();
     const { searchParams } = new URL(request.url);
     const token = searchParams.get("token");
 
@@ -52,4 +51,4 @@ export async function GET(request: Request) {
       { status: 500, headers: corsHeaders() }
     );
   }
-}
+});

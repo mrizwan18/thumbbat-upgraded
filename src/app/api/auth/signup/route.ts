@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import crypto from "crypto";
 import User from "@/server/models/User";
 import { NextResponse } from "next/server";
+import { withDb } from "@/src/utils/withDb";
 
 const FRONTEND_URL =
   process.env.NODE_ENV === "production"
@@ -17,7 +18,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-export async function POST(request: Request) {
+export const POST = withDb(async (request: Request) => {
   try {
     const { username, email, password } = await request.json();
 
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
+});
 
 async function sendConfirmationEmail(
   username: string,
