@@ -12,12 +12,24 @@ export const GET = withDb(async () => {
       );
     }
 
-    const leaderboard = await User.find({ highScore: { $gt: 0 } })
-      .sort({ highScore: -1 })
-      .limit(50)
-      .select("username highScore winPercentage")
-      .lean();
-
+    const leaderboard = await User.aggregate([
+      { 
+        $match: { highScore: { $gt: 0 } } 
+      },
+      { 
+        $project: { 
+          username: 1, 
+          highScore: 1, 
+          winPercentage: { $round: ["$winPercentage", 0] } // Round winPercentage
+        }
+      },
+      { 
+        $sort: { winPercentage: -1, highScore: -1 } 
+      },
+      { 
+        $limit: 50 
+      }
+    ]);
     // Modified empty results check
     if (!leaderboard || leaderboard.length === 0) {
       return NextResponse.json(
