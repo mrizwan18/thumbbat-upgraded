@@ -224,7 +224,7 @@ const Game = () => {
     }
     setTimeout(() => {
       setIsAnimating(false);
-    }, 1500);
+    }, 1200);
   };
 
   const declareWinner = (userScore: number, opponentScore: number) => {
@@ -475,6 +475,7 @@ const Game = () => {
             <OpponentMoveDisplay
               opponent={opponent || "Opponent"}
               opponentMove={opponentMove === null ? 0 : opponentMove}
+              isAnimating={isAnimating}
             />
           </>
         )}
