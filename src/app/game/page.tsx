@@ -39,6 +39,7 @@ const Game = () => {
   const [playerMovesHistory, setPlayerMovesHistory] = useState<number[]>([]);
   const [botMovesHistory, setBotMovesHistory] = useState<number[]>([]);
   const [gameResults, setGameResults] = useState<string[]>([]);
+  const [isAnimating, setIsAnimating] = useState(false);
 
   const updateGameResults = useCallback((result: string) => {
     setGameResults((prevResults: string[]) => [...prevResults, result]);
@@ -203,8 +204,9 @@ const Game = () => {
   };
 
   const playMove = (move: number) => {
-    if (isGameOver) return;
+    if (isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup) return;
 
+    setIsAnimating(true);
     setPlayerMove(move);
     setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
 
@@ -220,6 +222,9 @@ const Game = () => {
     } else {
       socketService.sendMove(move);
     }
+    setTimeout(() => {
+      setIsAnimating(false);
+    }, 1500);
   };
 
   const declareWinner = (userScore: number, opponentScore: number) => {
@@ -465,7 +470,7 @@ const Game = () => {
             <MoveSelection
               playerMove={playerMove === null ? 0 : playerMove}
               playMove={playMove}
-              isDisabled={isGameOver}
+              isDisabled={isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup}
             />
             <OpponentMoveDisplay
               opponent={opponent || "Opponent"}
