@@ -18,6 +18,12 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      isLogin ? handleLogin() : handleSignup();
+    }
+  };
+
   const validateUsername = async (username: string) => {
     if (username.length < 3 || username.length > 20) {
       return "Username must be between 3 and 20 characters.";
@@ -200,6 +206,7 @@ const Login = () => {
           placeholder="Username"
           className="w-full p-3 mb-4 rounded-lg bg-gray-700 border border-gray-600 focus:ring-2 focus:ring-blue-500"
           onChange={(e) => setUsername(e.target.value)}
+          onKeyDown={handleKeyDown}
           disabled={loading}
         />
 
@@ -210,6 +217,7 @@ const Login = () => {
             placeholder="Email"
             className="w-full p-3 mb-4 rounded-lg bg-gray-700 border border-gray-600 focus:ring-2 focus:ring-blue-500"
             onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={handleKeyDown}
             disabled={loading}
           />
         )}
@@ -219,6 +227,7 @@ const Login = () => {
           placeholder="Password"
           className="w-full p-3 mb-4 rounded-lg bg-gray-700 border border-gray-600 focus:ring-2 focus:ring-blue-500"
           onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={handleKeyDown}
           disabled={loading}
         />
 
