@@ -460,11 +460,17 @@ const Game = () => {
                 move={playerMove === null ? 0 : playerMove}
                 isPlayer={true}
                 startImage={plStartImg.src}
+                onMoveComplete={() => {
+                    setPlayerMove(null);
+                }}
               />
               <GameMoveImages
                 move={opponentMove === null ? 0 : opponentMove}
                 isPlayer={false}
                 startImage={opStartImg.src}
+                onMoveComplete={() => {
+                  setOpponentMove(null);
+                }}
               />
             </div>
             <MoveSelection

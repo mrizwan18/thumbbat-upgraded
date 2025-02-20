@@ -7,10 +7,12 @@ const GameMoveImages = ({
   move,
   isPlayer,
   startImage,
+  onMoveComplete,
 }: {
   move: number;
   isPlayer: boolean;
   startImage: string;
+  onMoveComplete?: () => void;
 }) => {
   const [imageAnimating, setImageAnimating] = useState(false); // Track animation state
   const [finalMoveImage, setFinalMoveImage] = useState<
@@ -22,7 +24,6 @@ const GameMoveImages = ({
     if (move) {
       setImageAnimating(true);
       setFinalMoveImage(null);
-
       // After 2 bounces, switch to the actual move image
       setTimeout(() => {
         setImageAnimating(false);
@@ -30,6 +31,11 @@ const GameMoveImages = ({
           isPlayer ? getPlayerMoveImage(move) : getOpponentMoveImage(move)
         );
       }, 1000);
+
+      // Only call onMoveComplete after showing the move for a while
+      setTimeout(() => {
+        onMoveComplete?.();
+      }, 1000); // Increased delay before resetting
     }
   }, [move, isPlayer]);
 
