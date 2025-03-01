@@ -46,7 +46,6 @@ export const handleGameRoutes = (
         user.winPercentage =
           totalGames > 0 ? (user.wins / totalGames) * 100 : 0;
 
-        console.log("Updated User:", user);
         await user.save();
       }
       if (users[socket.id]) {
