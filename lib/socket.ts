@@ -31,6 +31,9 @@ export const initSocket = (res: NextApiResponseServerIO) => {
     io.on("connection", (socket) => {
 
       socket.on("findMatch", (data) => {
+
+        console.log("user in: ", data);
+        
         users[socket.id] = {
           username: data.username,
           status: "idle",

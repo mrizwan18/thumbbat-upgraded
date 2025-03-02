@@ -93,7 +93,13 @@ const Game = () => {
 
     socketService.onOpponentMove((move) => {
       setOpponentMove(move);
-      if (playerMove !== null) {
+
+      console.log(move)
+      console.log(playerMove)
+
+      if (playerMove !== null && opponentMove !== null) {
+        console.log("inside")
+        setIsAnimating(true);
         handleGameLogic(playerMove, move);
       }
     });
@@ -206,11 +212,12 @@ const Game = () => {
   const playMove = (move: number) => {
     if (isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup) return;
 
-    setIsAnimating(true);
     setPlayerMove(move);
     setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
 
     if (mode === "bot") {
+      setIsAnimating(true);
+
       const scoreDifference = score.user - score.opponent;
 
       if (inning === "batting" || inning === "bowling") {
@@ -255,6 +262,7 @@ const Game = () => {
   };
 
   const handleGameLogic = (userMove: number, opponentMove: number) => {
+    console.log("animate")
     if (!userMove || !opponentMove || isGameOver) return;
     let playerAnimationComplete = false;
     let opponentAnimationComplete = false;
@@ -347,6 +355,9 @@ const Game = () => {
           }, 1000);
         }
       }
+
+      setOpponentMove(null);
+      setPlayerMove(null);
     };
     // Set animation completion handlers
     playerAnimationComplete = false;
@@ -424,14 +435,11 @@ const Game = () => {
             </button>
             <div className="relative">
               <button
-                className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold opacity-50 cursor-not-allowed"
-                disabled
+                className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold "
+                onClick={startSearch}
               >
                 Play Against Player 🏏
               </button>
-              <span className="absolute top-0 right-0 bg-red-500 text-white text-xs px-2 py-1 rounded-full transform translate-x-2 -translate-y-2">
-                Coming Soon
-              </span>
             </div>
           </div>
         )}
@@ -457,12 +465,14 @@ const Game = () => {
             />
             <div className="flex justify-center gap-6 mb-4">
               <GameMoveImages
-                move={playerMove === null ? 0 : playerMove}
+                playerMove={playerMove === null ? 0 : playerMove}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={true}
                 startImage={plStartImg.src}
               />
               <GameMoveImages
-                move={opponentMove === null ? 0 : opponentMove}
+                playerMove={playerMove === null ? 0 : playerMove}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={false}
                 startImage={opStartImg.src}
               />
@@ -472,11 +482,13 @@ const Game = () => {
               playMove={playMove}
               isDisabled={isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup}
             />
+            { playerMove && opponentMove && (
             <OpponentMoveDisplay
               opponent={opponent || "Opponent"}
               opponentMove={opponentMove === null ? 0 : opponentMove}
               isAnimating={isAnimating}
             />
+            )}
           </>
         )}
 

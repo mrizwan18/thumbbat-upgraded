@@ -4,11 +4,13 @@ import { StaticImageData } from "next/image";
 import Image from "next/image";
 
 const GameMoveImages = ({
-  move,
+  playerMove,
+  opponentMove,
   isPlayer,
   startImage,
 }: {
-  move: number;
+  playerMove: number;
+  opponentMove: number;
   isPlayer: boolean;
   startImage: string;
 }) => {
@@ -19,7 +21,8 @@ const GameMoveImages = ({
 
   useEffect(() => {
     // Start bounce animation if move is selected
-    if (move) {
+    console.log("gameMove")
+    if (playerMove && opponentMove) {
       setImageAnimating(true);
       setFinalMoveImage(null);
 
@@ -27,22 +30,22 @@ const GameMoveImages = ({
       setTimeout(() => {
         setImageAnimating(false);
         setFinalMoveImage(
-          isPlayer ? getPlayerMoveImage(move) : getOpponentMoveImage(move)
+          isPlayer ? getPlayerMoveImage(playerMove) : getOpponentMoveImage(opponentMove)
         );
       }, 1000);
     }
-  }, [move, isPlayer]);
+  }, [playerMove,opponentMove, isPlayer]);
 
   const renderImage = () => {
     const imageSrc =
-      move == null || imageAnimating
+      playerMove == null || imageAnimating
         ? startImage
         : finalMoveImage ?? startImage;
 
     return (
       <Image
         src={imageSrc}
-        alt={`Move ${move}`}
+        alt={`Move ${playerMove}`}
         width={100}
         height={100}
         className={`move-image ${imageAnimating ? "bounce" : ""} ${
