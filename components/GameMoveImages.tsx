@@ -21,7 +21,6 @@ const GameMoveImages = ({
 
   useEffect(() => {
     // Start bounce animation if move is selected
-    console.log("gameMove")
     if (playerMove && opponentMove) {
       setImageAnimating(true);
       setFinalMoveImage(null);
@@ -30,11 +29,13 @@ const GameMoveImages = ({
       setTimeout(() => {
         setImageAnimating(false);
         setFinalMoveImage(
-          isPlayer ? getPlayerMoveImage(playerMove) : getOpponentMoveImage(opponentMove)
+          isPlayer
+            ? getPlayerMoveImage(playerMove)
+            : getOpponentMoveImage(opponentMove)
         );
       }, 1000);
     }
-  }, [playerMove,opponentMove, isPlayer]);
+  }, [playerMove, opponentMove, isPlayer]);
 
   const renderImage = () => {
     const imageSrc =

@@ -2,8 +2,6 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import { handleGameRoutes } from "./routes/gameRoutes";
-import { handleMatchmakingRoutes } from "./routes/matchmakingRoutes";
 import dbConnect from "./config/db";
 import dotenv from "dotenv";
 import path from "path";
@@ -34,15 +32,6 @@ const io = new Server(httpServer, {
   transports: ["polling", "websocket"],
 });
 
-// Store connected users and their states
-const users: {
-  [key: string]: {
-    username: string;
-    status: "idle" | "playing";
-    opponent: string | null;
-  };
-} = {};
-
 // Connect to MongoDB
 dbConnect()
   .then(() => {
@@ -54,9 +43,6 @@ dbConnect()
 
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
-
-  handleGameRoutes(io, socket, users);
-  handleMatchmakingRoutes(io, socket, users);
 });
 
 // Add error handler for WebSocket

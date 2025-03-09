@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { socketService } from "@/services/socketService";
 import Scoreboard from "@/components/Scoreboard";
 import MoveSelection from "@/components/MoveSelection";
 import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
@@ -15,7 +14,6 @@ const Game = () => {
   const [mode, setMode] = useState<"bot" | "player" | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTime, setSearchTime] = useState(0);
-  const [matchFound, setMatchFound] = useState(false);
   const [opponent, setOpponent] = useState<string | null>(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [score, setScore] = useState<{
@@ -38,18 +36,12 @@ const Game = () => {
   const [showGameStartPopup, setShowGameStartPopup] = useState(false); // ✅ New: Game start popup
   const [playerMovesHistory, setPlayerMovesHistory] = useState<number[]>([]);
   const [botMovesHistory, setBotMovesHistory] = useState<number[]>([]);
-  const [gameResults, setGameResults] = useState<string[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
-
-  const updateGameResults = useCallback((result: string) => {
-    setGameResults((prevResults: string[]) => [...prevResults, result]);
-  }, []);
 
   const restartGame = () => {
     setMode(null);
     setSearching(false);
     setSearchTime(0);
-    setMatchFound(false);
     setGameStarted(false);
     setScore({ user: 0, opponent: 0, firstInningScore: null });
     setInning(null);
@@ -66,66 +58,7 @@ const Game = () => {
     if (!localStorage.getItem("token")) {
       router.push("/login");
     }
-
-    // Connect socket service
-    socketService.connect();
-
-    // Set up event listeners using socketService methods
-    socketService.onMatchFound((data) => {
-      setOpponent(data.opponent);
-      setMatchFound(true);
-      setSearching(false);
-      setGameStarted(true);
-      setMode("player");
-      setInning(data.role);
-      setShowGameStartPopup(true);
-
-      setTimeout(() => {
-        setShowGameStartPopup(false);
-      }, 3000);
-    });
-
-    socketService.onNoMatchFound(() => {
-      alert("❌ No player found, try again!");
-      setMode(null);
-      setSearching(false);
-    });
-
-    socketService.onOpponentMove((move) => {
-      setOpponentMove(move);
-
-      console.log(move)
-      console.log(playerMove)
-
-      if (playerMove !== null && opponentMove !== null) {
-        console.log("inside")
-        setIsAnimating(true);
-        handleGameLogic(playerMove, move);
-      }
-    });
-
-    // Cleanup
-    return () => {
-      socketService.cleanup();
-    };
-  }, [router, playerMove]);
-
-  const startSearch = () => {
-    setSearching(true);
-    setSearchTime(0);
-    setMatchFound(false);
-
-    socketService.findMatch(localStorage.getItem("username") || "");
-
-    const interval = setInterval(() => {
-      setSearchTime((prev) => prev + 1);
-    }, 1000);
-
-    setTimeout(() => {
-      setSearching(false);
-      clearInterval(interval);
-    }, 20000);
-  };
+  }, [router]);
 
   // Example of a more sophisticated transition matrix considering move, inning, and score difference
   const transitionMatrix = {
@@ -210,7 +143,15 @@ const Game = () => {
   };
 
   const playMove = (move: number) => {
-    if (isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup) return;
+    if (
+      isGameOver ||
+      isAnimating ||
+      !gameStarted ||
+      showInningsOverlay ||
+      showPopup ||
+      showGameStartPopup
+    )
+      return;
 
     setPlayerMove(move);
     setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
@@ -226,8 +167,6 @@ const Game = () => {
         setBotMovesHistory((prevHistory) => [...prevHistory, botMove]);
         handleGameLogic(move, botMove);
       }
-    } else {
-      socketService.sendMove(move);
     }
     setTimeout(() => {
       setIsAnimating(false);
@@ -238,7 +177,6 @@ const Game = () => {
     setIsGameOver(true);
     setShowPopup(true);
 
-    let result = "draw";
     let winnerMessage = "🟡 It's a Draw!";
     if (userScore === opponentScore) {
       setWinner(winnerMessage);
@@ -248,21 +186,12 @@ const Game = () => {
           ? localStorage.getItem("username") || "Player"
           : opponent || "Opponent";
       setWinner(winnerMessage + " Wins");
-      result = userScore > opponentScore ? "win" : "lose";
     }
 
-    updateGameResults(result);
     updateTransitionMatrix();
-
-    socketService.gameOver({
-      username: localStorage.getItem("username") || "",
-      userScore: userScore,
-      opponentScore: opponentScore,
-    });
   };
 
   const handleGameLogic = (userMove: number, opponentMove: number) => {
-    console.log("animate")
     if (!userMove || !opponentMove || isGameOver) return;
     let playerAnimationComplete = false;
     let opponentAnimationComplete = false;
@@ -434,10 +363,7 @@ const Game = () => {
               Play Against Rizzwon, the Bot 🤖
             </button>
             <div className="relative">
-              <button
-                className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold "
-                onClick={startSearch}
-              >
+              <button className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold ">
                 Play Against Player 🏏
               </button>
             </div>
@@ -480,14 +406,21 @@ const Game = () => {
             <MoveSelection
               playerMove={playerMove === null ? 0 : playerMove}
               playMove={playMove}
-              isDisabled={isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup}
+              isDisabled={
+                isGameOver ||
+                isAnimating ||
+                !gameStarted ||
+                showInningsOverlay ||
+                showPopup ||
+                showGameStartPopup
+              }
             />
-            { playerMove && opponentMove && (
-            <OpponentMoveDisplay
-              opponent={opponent || "Opponent"}
-              opponentMove={opponentMove === null ? 0 : opponentMove}
-              isAnimating={isAnimating}
-            />
+            {playerMove && opponentMove && (
+              <OpponentMoveDisplay
+                opponent={opponent || "Opponent"}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
+                isAnimating={isAnimating}
+              />
             )}
           </>
         )}

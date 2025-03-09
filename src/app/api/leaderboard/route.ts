@@ -13,22 +13,22 @@ export const GET = withDb(async () => {
     }
 
     const leaderboard = await User.aggregate([
-      { 
-        $match: { highScore: { $gt: 0 } } 
+      {
+        $match: { highScore: { $gt: 0 } },
       },
-      { 
-        $project: { 
-          username: 1, 
-          highScore: 1, 
-          winPercentage: { $round: ["$winPercentage", 0] } // Round winPercentage
-        }
+      {
+        $project: {
+          username: 1,
+          highScore: 1,
+          winPercentage: { $round: ["$winPercentage", 0] }, // Round winPercentage
+        },
       },
-      { 
-        $sort: { winPercentage: -1, highScore: -1 } 
+      {
+        $sort: { winPercentage: -1, highScore: -1 },
       },
-      { 
-        $limit: 50 
-      }
+      {
+        $limit: 50,
+      },
     ]);
     // Modified empty results check
     if (!leaderboard || leaderboard.length === 0) {
