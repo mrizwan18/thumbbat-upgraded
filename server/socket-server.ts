@@ -14,13 +14,15 @@ import User from "./models/User";
 dotenv.config({ path: path.resolve(process.cwd(), "server/.env") });
 
 /** ---- Constants ---- */
-const TOSS_CALL_TIMEOUT_MS = 5000;
-const CHOICE_TIMEOUT_MS = 5000;
-const RESULT_REVEAL_MS = 2000;
+const TOSS_CALL_TIMEOUT_MS = 15000;
+const CHOICE_TIMEOUT_MS = 15000;
+const RESULT_REVEAL_MS = 5000;
 
-const ROUND_TIMEOUT_MS = 5000;          // 5s to pick a move
-const CLIENT_ANIMATION_MS = 1200;       // clients animate then apply snapshot
+const ROUND_TIMEOUT_MS = 15000;          // 15s to pick a move
+const CLIENT_ANIMATION_MS = 1500;       // clients animate then apply snapshot
 const DISCONNECT_GRACE_MS = 20000;      // 20s to reconnect before walkover
+const ROOM_WAIT_MS = 60_000; // 1 minute to find the second player
+const codeToRoomId = new Map<string, string>(); // code -> roomId
 
 type TossCall = "heads" | "tails";
 type BatOrBowl = "bat" | "bowl";
@@ -56,6 +58,7 @@ type RoomState = {
   id: string;
   players: PlayerId[];            // two socket ids
   names: Record<PlayerId, string>;
+  code?: string;
   // Toss
   callerId?: PlayerId;
   tossCall?: TossCall;
@@ -70,6 +73,7 @@ type RoomState = {
   // Game
   game: GameState | null;
   round: RoundState | null;
+  waitingTimer?: NodeJS.Timeout | null;
   startedAt?: number;
 };
 
@@ -113,6 +117,27 @@ const socketToRoom = new Map<PlayerId, string>(); // socketId -> roomId
 /** ---- Helpers ---- */
 const pickRandom = <T,>(arr: T[]): T => arr[crypto.randomInt(0, arr.length)];
 const randMove = () => crypto.randomInt(1, 7); // 1..6
+
+function cleanupRoom(roomId: string) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  clearTimer(room.callTimer);
+  clearTimer(room.choiceTimer);
+  if (room.round?.timer) clearTimer(room.round.timer);
+  if (room.waitingTimer) clearTimer(room.waitingTimer);
+  room.players.forEach((sid) => {
+    socketToRoom.delete(sid);
+    if (room.disconnectTimers?.[sid]) clearTimer(room.disconnectTimers[sid]);
+  });
+  if (room.code) codeToRoomId.delete(room.code); // NEW
+  rooms.delete(roomId);
+}
+function codeIsValid(code: string) {
+  return /^[A-Z0-9]{4,8}$/.test(code);
+}
+function codeRoomExists(code: string) {
+  return codeToRoomId.has(code);
+}
 
 function startTimer(ms: number, fn: () => void): NodeJS.Timeout {
   return setTimeout(fn, ms);
@@ -532,6 +557,148 @@ function packSnapshot(room: RoomState) {
 /** ---- Socket handlers ---- */
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
+
+    // --- Create a room by code (host) ---
+  socket.on("room:create", (p: { code: string; name?: string }) => {
+    const code = (p.code || "").toUpperCase();
+    if (!codeIsValid(code)) {
+      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
+      return;
+    }
+    if (codeRoomExists(code)) {
+      safeEmit(socket.id, "room:exists", { code });
+      return;
+    }
+
+    const roomId = `code-${crypto.randomUUID()}`;
+    const name = (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0,4)}`).toString();
+
+    const state: RoomState = {
+      id: roomId,
+      code,
+      players: [socket.id],
+      names: { [socket.id]: name },
+      callerId: undefined,
+      tossCall: undefined,
+      tossOutcome: undefined,
+      tossWinnerId: undefined,
+      callTimer: null,
+      choiceTimer: null,
+      tokens: { [socket.id]: crypto.randomUUID() },
+      disconnectTimers: { [socket.id]: null },
+      game: null,
+      round: null,
+      waitingTimer: null,
+    };
+
+    rooms.set(roomId, state);
+    codeToRoomId.set(code, roomId);
+    socketToRoom.set(socket.id, roomId);
+    io.sockets.sockets.get(socket.id)?.join(roomId);
+
+    nameMap.set(socket.id, name);
+
+    // issue resume token
+    safeEmit(socket.id, "session:token", { roomId, token: state.tokens[socket.id] });
+
+    // start a 60s waiting timer
+    const expiresAt = Date.now() + ROOM_WAIT_MS;
+    state.waitingTimer = startTimer(ROOM_WAIT_MS, () => {
+      const r = rooms.get(roomId);
+      if (!r) return;
+      if (r.players.length < 2 && !r.game) {
+        safeEmit(socket.id, "room:timeout", { code, roomId });
+        cleanupRoom(roomId);
+      }
+    });
+
+    // notify host they're waiting
+    safeEmit(socket.id, "room:waiting", { code, roomId, expiresAt });
+  });
+
+  // --- Join a room by code (guest) ---
+  socket.on("room:joinByCode", (p: { code: string; name?: string }) => {
+    const code = (p.code || "").toUpperCase();
+    if (!codeIsValid(code)) {
+      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
+      return;
+    }
+    const roomId = codeToRoomId.get(code);
+    if (!roomId) {
+      safeEmit(socket.id, "room:notFound", { code });
+      return;
+    }
+    const room = rooms.get(roomId);
+    if (!room) {
+      safeEmit(socket.id, "room:notFound", { code });
+      codeToRoomId.delete(code);
+      return;
+    }
+
+    if (room.players.includes(socket.id)) {
+      // already in
+      safeEmit(socket.id, "room:alreadyIn", { code, roomId });
+      return;
+    }
+    if (room.players.length >= 2) {
+      safeEmit(socket.id, "room:full", { code });
+      return;
+    }
+
+    const name = (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0,4)}`).toString();
+    room.players.push(socket.id);
+    room.names[socket.id] = name;
+    room.tokens[socket.id] = crypto.randomUUID();
+    room.disconnectTimers[socket.id] = null;
+
+    nameMap.set(socket.id, name);
+    socketToRoom.set(socket.id, roomId);
+    io.sockets.sockets.get(socket.id)?.join(roomId);
+
+    // send private token
+    safeEmit(socket.id, "session:token", { roomId, token: room.tokens[socket.id] });
+
+    // cancel waiting timer (we have both players now)
+    if (room.waitingTimer) clearTimer(room.waitingTimer);
+    room.waitingTimer = null;
+
+    // choose toss caller randomly
+    room.callerId = pickRandom(room.players);
+
+    // announce match found (same shape as queue pairing)
+    io.to(room.id).emit("match:found", {
+      roomId: room.id,
+      players: room.players.map((id) => ({ id, name: room.names[id] })) as PlayerInfo[],
+      callerId: room.callerId,
+      code: room.code, // optional, handy for UI
+    });
+
+    // kick off toss flow
+    startToss(room);
+  });
+
+  // --- Optional: leave a code room before game starts ---
+  socket.on("room:leave", (p: { roomId?: string; code?: string }) => {
+    const roomId = p.roomId || (p.code ? codeToRoomId.get(p.code.toUpperCase()) : undefined);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    // remove this player
+    const idx = room.players.indexOf(socket.id);
+    if (idx >= 0) room.players.splice(idx, 1);
+    delete room.names[socket.id];
+    delete room.tokens[socket.id];
+    socketToRoom.delete(socket.id);
+    io.sockets.sockets.get(socket.id)?.leave(room.id);
+
+    // if game hasn't started and <2 players, clean up
+    const preGame = !room.game;
+    if (preGame) {
+      room.players.forEach((peer) => safeEmit(peer, "room:hostLeft", { roomId, code: room.code || null }));
+      cleanupRoom(roomId);
+    }
+  });
 
   socket.on("me:setName", (name: string) => {
     const trimmed = (name || "").toString().trim();

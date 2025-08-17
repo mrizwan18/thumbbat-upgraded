@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 export default function Home() {
   const router = useRouter();
   const [myName, setMyName] = useState("Player");
+  const [isLoggedIn, setIsloggedIn] = useState(false);
 
   // Safe localStorage read + optional redirect
   useEffect(() => {
@@ -15,7 +16,7 @@ export default function Home() {
     const n = localStorage.getItem("username");
     if (n) setMyName(n);
     if (localStorage.getItem("token")) {
-      router.push("/game");
+      setIsloggedIn(true)
     }
   }, [router]);
 
@@ -310,8 +311,53 @@ function JoinRoomByCode({ variant = "card" }: { variant?: JoinVariant }) {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [isLoggedIn, setIsloggedIn] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem("token")) {
+      setIsloggedIn(true)
+    }
+  }, [router]);
 
   const isHero = variant === "hero";
+
+  async function handleJoin(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    const c = normalized;
+    if (c.length < 4 || c.length > 8) {
+      setErr("Enter a 4–8 character code");
+      return;
+    }
+    // NEW: auth gate
+    if (!isLoggedIn) {
+      // preserve intent
+      return router.push(`/login?next=${encodeURIComponent(`/game?join=${c}`)}`);
+    }
+    setLoading(true);
+    try {
+      router.push(`/game?join=${c}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+  
+  async function handleCreate() {
+    const c = genCode();
+    if (!isLoggedIn) {
+      return router.push(`/login?next=${encodeURIComponent(`/game?host=${c}`)}`);
+    }
+    try {
+      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(c);
+      setToast(`Room code copied: ${c}`);
+    } catch {
+      setToast(`Room code: ${c}`);
+    } finally {
+      setTimeout(() => setToast(null), 2200);
+    }
+    router.push(`/game?host=${c}`);
+  }
 
   useEffect(() => {
     if (isHero && inputRef.current) inputRef.current.focus();
@@ -324,35 +370,6 @@ function JoinRoomByCode({ variant = "card" }: { variant?: JoinVariant }) {
     let out = "";
     for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
     return out;
-  }
-
-  async function handleJoin(e: React.FormEvent) {
-    e.preventDefault();
-    setErr("");
-    const c = normalized;
-    if (c.length < 4 || c.length > 8) {
-      setErr("Enter a 4–8 character code");
-      return;
-    }
-    setLoading(true);
-    try {
-      router.push(`/game?join=${c}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreate() {
-    const c = genCode();
-    try {
-      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(c);
-      setToast(`Room code copied: ${c}`);
-    } catch {
-      setToast(`Room code: ${c}`);
-    } finally {
-      setTimeout(() => setToast(null), 2200);
-    }
-    router.push(`/game?host=${c}`);
   }
 
   return (
