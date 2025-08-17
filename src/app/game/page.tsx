@@ -9,6 +9,8 @@ import GameMoveImages from "@/components/GameMoveImages";
 import opStartImg from "@/public/images/start-r.png";
 import plStartImg from "@/public/images/start.png";
 import { getSocket } from "@/src/lib/socket";
+import type { RoundStartPayload, Snapshot } from "@/src/types/realtime";
+import { Socket } from "socket.io-client";
 
 type TossPhase = "idle" | "calling" | "waiting-call" | "showing-result" | "choosing" | "waiting-choice" | "done";
 
@@ -50,14 +52,34 @@ const Game = () => {
   const [tossOutcome, setTossOutcome] = useState<"heads" | "tails" | null>(null);
   const [tossWinnerId, setTossWinnerId] = useState<string | null>(null);
   const [iChooseCountdown, setIChooseCountdown] = useState<number>(0);
-  const socketRef = useRef<ReturnType<typeof getSocket> | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const myId = useMemo(() => {
-    return socketRef.current?.id || "";
+  const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
+  const [roundCountdown, setRoundCountdown] = useState<number>(0);
+  const [hasPickedThisRound, setHasPickedThisRound] = useState(false);
+
+  const myIdRef = useRef<string>("");
+  const opponentIdRef = useRef<string>("");
+  const cancelRoundCountdownRef = useRef<null | (() => void)>(null);
+
+  useEffect(() => {
+    const s = socketRef.current;
+    if (!s) return;
+    const roomId = localStorage.getItem("mp_roomId");
+    const token = localStorage.getItem("mp_token");
+    if (roomId && token) {
+      s.emit("resume:join", { roomId, token, name: myName });
+    }
   }, [socketRef.current?.id]);
 
-  const myName = useMemo(() => localStorage.getItem("username") || "You", []);
+  const [myName, setMyName] = useState("You");
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const n = localStorage.getItem("username");
+      if (n) setMyName(n);
+    }
+  }, []);
 
   useEffect(() => {
     if (!searching) return;
@@ -126,14 +148,72 @@ const Game = () => {
     s.emit("me:setName", myName);
     s.emit("queue:join");
 
+    socketRef.current = s;
+      s.on("connect", () => {
+        myIdRef.current = s.id || "";
+    }); 
+
+    const runCountdownTo = (deadlineMs: number, setter: (n: number) => void) => {
+      setter(Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000)));
+      const int = setInterval(() => {
+        const left = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
+        setter(left);
+        if (left <= 0) clearInterval(int);
+      }, 250);
+      return () => clearInterval(int);
+    };
+    
+    s.on("move:roundStart", ({ round, deadlineAt, snapshot }: RoundStartPayload) => {
+      const myId = myIdRef.current;
+      const oppId = opponentIdRef.current;
+      const scores = snapshot.scores as Record<string, number>; // (already typed, this is extra-safe)
+    
+      const iBat = snapshot.battingId === myId;
+      setInning(iBat ? "batting" : "bowling");
+      setScore({
+        user: scores[myId] ?? 0,
+        opponent: scores[oppId] ?? 0,
+        firstInningScore: snapshot.firstInningScore,
+      });
+      setSecondInningStarted(snapshot.secondInningStarted);
+    
+      setHasPickedThisRound(false);
+      setRoundDeadline(deadlineAt);
+    
+      // reset previous countdown
+      if (cancelRoundCountdownRef.current) cancelRoundCountdownRef.current();
+      cancelRoundCountdownRef.current = runCountdownTo(deadlineAt, setRoundCountdown);
+    });
+
+    s.on("session:token", ({ roomId, token }) => {
+      localStorage.setItem("mp_roomId", roomId);
+      localStorage.setItem("mp_token", token);
+    });
+
+    s.on("state:snapshot", ({ snapshot, round }) => {
+      // Apply authoritative state
+      setInning(snapshot.battingId === s.id ? "batting" : "bowling"); // derived role
+      setScore({
+        user: snapshot.scores[s.id] ?? 0,
+        opponent: snapshot.scores[opponentSocketId] ?? 0, // you can compute via players array you saved
+        firstInningScore: snapshot.firstInningScore,
+      });
+      setSecondInningStarted(snapshot.secondInningStarted);
+      setGameStarted(!snapshot.gameOver); // if gameOver, show popup/winner
+      // Optionally rebuild countdown if round is ongoing
+    });
+
     // match found
     s.on("match:found", (payload: {
       roomId: string;
       players: { id: string; name: string }[];
       callerId: string;
     }) => {
+      const me = s.id;
+      const opp = payload.players.find(p => p.id !== me);
+      opponentIdRef.current = opp?.id ?? "";
+      setOpponent(opp?.name || "Opponent");
       setSearching(false);
-      setOpponent(payload.players.find(p => p.id !== s.id)?.name || "Opponent");
       setRoomId(payload.roomId);
       setCallerId(payload.callerId);
       setIsCaller(payload.callerId === s.id);
@@ -164,6 +244,51 @@ const Game = () => {
       startCountdown(timeoutMs, setIChooseCountdown);
     });
 
+    s.on("move:roundResult", ({ moves, outcome, applyAfterMs, snapshot }: {
+      moves: Record<string, number>;
+      outcome: any;
+      applyAfterMs: number;
+      snapshot: Snapshot;
+    }) => {
+      const myId = myIdRef.current;
+      const oppId = opponentIdRef.current;
+    
+      setPlayerMove(moves[myId]);
+      setOpponentMove(moves[oppId]);
+      setIsAnimating(true);
+    
+      setTimeout(() => {
+        setIsAnimating(false);
+    
+        const scores = snapshot.scores;
+        const iBat = snapshot.battingId === myId;
+        setInning(iBat ? "batting" : "bowling");
+        setScore({
+          user: scores[myId] ?? 0,
+          opponent: scores[oppId] ?? 0,
+          firstInningScore: snapshot.firstInningScore,
+        });
+        setSecondInningStarted(snapshot.secondInningStarted);
+    
+        if (snapshot.gameOver) {
+          setIsGameOver(true);
+          setShowPopup(true);
+          const winnerName =
+            snapshot.winnerId === myId
+              ? (myName || "You")
+              : (opponent || "Opponent");
+          setWinner(`${winnerName} Wins`);
+        }
+    
+        setPlayerMove(null);
+        setOpponentMove(null);
+        setHasPickedThisRound(false);
+        setRoundDeadline(null);
+        setRoundCountdown(0);
+      }, applyAfterMs);
+    });
+
+
     // final
     s.on("toss:final", (p: {
       roomId: string;
@@ -181,10 +306,15 @@ const Game = () => {
     });
 
     s.on("opponent:left", () => {
-      setSearching(false);
-      setShowPopup(true);
-      setWinner("Opponent left. You win by walkover ");
       setIsGameOver(true);
+      setShowPopup(true);
+      setWinner("Opponent left. You win by walkover 🏆");
+    });
+    
+    s.on("game:walkover", ({ snapshot }) => {
+      setIsGameOver(true);
+      setShowPopup(true);
+      setWinner("Opponent left. You win by walkover 🏆");
     });
   };
 
@@ -306,6 +436,15 @@ const Game = () => {
 
     setPlayerMove(move);
     setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
+
+    if (mode === "player") {
+      if (hasPickedThisRound) return;
+      if (!roundDeadline || Date.now() > roundDeadline) return;
+      socketRef.current?.emit("move:select", { roomId, move });
+      setHasPickedThisRound(true);
+      setPlayerMove(move);         
+      return;
+    }
 
     if (mode === "bot") {
       setIsAnimating(true);
@@ -608,7 +747,7 @@ const Game = () => {
         {gameStarted && (
           <>
             <p className="text-xl mb-2">
-              {localStorage.getItem("username")}, you are{" "}
+              {myName}, you are{" "}
               <span className="text-yellow-400">{inning}</span>
             </p>
 
@@ -632,7 +771,7 @@ const Game = () => {
               />
             </div>
             <MoveSelection
-              playerMove={playerMove === null ? 0 : playerMove}
+              playerMove={playerMove ?? 0}
               playMove={playMove}
               isDisabled={
                 isGameOver ||
@@ -640,9 +779,17 @@ const Game = () => {
                 !gameStarted ||
                 showInningsOverlay ||
                 showPopup ||
-                showGameStartPopup
+                showGameStartPopup ||
+                mode === "player" && hasPickedThisRound
               }
             />
+
+            {mode === "player" && roundDeadline && !isGameOver && (
+              <p className="mt-2 text-sm opacity-80">
+                Pick your move in <span className="text-yellow-400">{roundCountdown}s</span>
+              </p>
+            )}
+
             {playerMove && opponentMove && (
               <OpponentMoveDisplay
                 opponent={opponent || "Opponent"}
