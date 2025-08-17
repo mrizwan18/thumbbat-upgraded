@@ -15,7 +15,7 @@ const TOSS_CALL_TIMEOUT_MS = 5000;
 const CHOICE_TIMEOUT_MS = 5000;
 const RESULT_REVEAL_MS = 2000;
 
-const ROUND_TIMEOUT_MS = 15000;          // 5s to pick a move
+const ROUND_TIMEOUT_MS = 5000;          // 5s to pick a move
 const CLIENT_ANIMATION_MS = 1200;       // clients animate then apply snapshot
 const DISCONNECT_GRACE_MS = 20000;      // 20s to reconnect before walkover
 
