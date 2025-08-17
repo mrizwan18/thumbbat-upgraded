@@ -59,7 +59,7 @@ export const GET = withDb(async (request: Request) => {
 
     await User.updateOne(
       { _id: vt.userId },
-      { $set: { emailVerifiedAt: new Date() } }
+      { $set: { emailVerifiedAt: new Date(), isConfirmed: true } }
     );
 
     // Consume token
