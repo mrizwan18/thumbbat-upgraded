@@ -47,6 +47,7 @@ export const POST = withDb(async (request: Request) => {
     return NextResponse.json({
       token,
       username: user.username,
+      userId: user._id,
       highScore: user.highScore,
       message: "Login successful",
     });

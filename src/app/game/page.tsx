@@ -146,6 +146,7 @@ const Game = () => {
     socketRef.current = s;
 
     s.emit("me:setName", myName);
+    s.emit("me:setUser", { userId: localStorage.getItem("userId"), name: localStorage.getItem("username") });
     s.emit("queue:join");
 
     socketRef.current = s;

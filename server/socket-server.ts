@@ -7,6 +7,9 @@ import dbConnect from "./config/db";
 import dotenv from "dotenv";
 import path from "path";
 import crypto from "crypto";
+import mongoose from "mongoose";
+import Match from "./models/Match";
+import User from "./models/User";
 
 dotenv.config({ path: path.resolve(process.cwd(), "server/.env") });
 
@@ -67,7 +70,10 @@ type RoomState = {
   // Game
   game: GameState | null;
   round: RoundState | null;
+  startedAt?: number;
 };
+
+const userIdMap = new Map<PlayerId, string | null>();
 
 const app = express();
 const httpServer = createServer(app);
@@ -267,6 +273,9 @@ function finalizeChoice(room: RoomState, choice: BatOrBowl) {
     target: null,
     gameOver: false,
   };
+
+  room.startedAt = Date.now();
+
   room.round = null;
 
   io.to(room.id).emit("toss:final", {
@@ -412,7 +421,94 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
     setTimeout(() => startRound(room), CLIENT_ANIMATION_MS + 100);
   } else {
     // Game over -> cleanup room after a short delay (optional)
+    void persistMatch(room, outcome.type);
+
     setTimeout(() => cleanupRoom(room.id), 15000);
+  }
+}
+
+async function persistMatch(room: RoomState, reason: string) {
+  try {
+    const g = room.game;
+    if (!g) return;
+
+    const [A, B] = room.players;
+    const aName = room.names[A] || `Player-${A.slice(0, 4)}`;
+    const bName = room.names[B] || `Player-${B.slice(0, 4)}`;
+    const aScore = g.scores[A] ?? 0;
+    const bScore = g.scores[B] ?? 0;
+
+    const aUserId = userIdMap.get(A) || null;
+    const bUserId = userIdMap.get(B) || null;
+
+    const winnerId = g.winnerId || null;
+    const loserId  = winnerId ? (winnerId === A ? B : A) : null;
+
+    // Build doc
+    const doc = {
+      roomId: room.id,
+      players: [
+        { user: aUserId ? new mongoose.Types.ObjectId(aUserId) : null, username: aName, socketId: A },
+        { user: bUserId ? new mongoose.Types.ObjectId(bUserId) : null, username: bName, socketId: B },
+      ],
+      aScore,
+      bScore,
+      target: g.target ?? null,
+      winner: winnerId
+        ? {
+            user: (winnerId === A ? aUserId : bUserId)
+              ? new mongoose.Types.ObjectId(winnerId === A ? aUserId! : bUserId!)
+              : null,
+            username: winnerId === A ? aName : bName,
+          }
+        : { user: null, username: "" },
+      loser: loserId
+        ? {
+            user: (loserId === A ? aUserId : bUserId)
+              ? new mongoose.Types.ObjectId(loserId === A ? aUserId! : bUserId!)
+              : null,
+            username: loserId === A ? aName : bName,
+          }
+        : { user: null, username: "" },
+      reason,
+      firstInningScore: g.firstInningScore ?? null,
+      startedAt: room.startedAt ? new Date(room.startedAt) : new Date(),
+      endedAt: new Date(),
+    };
+
+    await Match.create(doc);
+
+    // Update player stats (only for real users we can identify)
+    const updates: Array<Promise<any>> = [];
+
+    const bumpUser = async (idStr: string | null, isWinner: boolean, score: number) => {
+      if (!idStr) return;
+      const _id = new mongoose.Types.ObjectId(idStr);
+
+      // wins/losses + max high score
+      await User.updateOne(
+        { _id },
+        {
+          $inc: { wins: isWinner ? 1 : 0, losses: isWinner ? 0 : 1 },
+          $max: { highScore: score },
+        }
+      );
+
+      // recompute win %
+      const u = await User.findById(_id).select("wins losses");
+      if (u) {
+        const total = (u.wins || 0) + (u.losses || 0);
+        const pct = total > 0 ? Math.round(((u.wins || 0) / total) * 100) : 0;
+        await User.updateOne({ _id }, { $set: { winPercentage: pct } });
+      }
+    };
+
+    await Promise.all([
+      bumpUser(aUserId, winnerId === A, aScore),
+      bumpUser(bUserId, winnerId === B, bScore),
+    ]);
+  } catch (err) {
+    console.error("Persist match failed:", err);
   }
 }
 
@@ -491,6 +587,28 @@ io.on("connection", (socket: Socket) => {
     const bothPicked = Object.values(r.moves).every((m) => m != null);
     if (bothPicked) {
       finalizeRound(room, "bothSelected");
+    }
+  });
+
+  socket.on("me:setUser", async (p: { userId?: string; name?: string }) => {
+    try {
+      const id = (p.userId || "").toString();
+      if (id && mongoose.isValidObjectId(id)) {
+        const u = await User.findById(id).select("_id username");
+        if (u) {
+          userIdMap.set(socket.id, u._id.toString());
+          // Optionally keep server-side name in sync with account username
+          nameMap.set(socket.id, p.name || u.username || `Player-${socket.id.slice(0, 4)}`);
+        } else {
+          userIdMap.set(socket.id, null);
+          if (p.name) nameMap.set(socket.id, p.name);
+        }
+      } else {
+        userIdMap.set(socket.id, null);
+        if (p.name) nameMap.set(socket.id, p.name);
+      }
+    } catch {
+      userIdMap.set(socket.id, null);
     }
   });
 
@@ -616,6 +734,7 @@ io.on("connection", (socket: Socket) => {
           snapshot: packSnapshot(room),
         });
       }
+      void persistMatch(room, "walkover");
       cleanupRoom(roomId);
     });
 
