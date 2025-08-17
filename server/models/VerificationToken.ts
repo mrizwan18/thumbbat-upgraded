@@ -2,10 +2,10 @@
 import mongoose, { Schema, Types } from "mongoose";
 
 const VerificationTokenSchema = new Schema({
-  userId:   { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  userId:   { type: Schema.Types.ObjectId, ref: "User", required: true },
   email:    { type: String, required: true },
-  tokenHash:{ type: String, required: true, unique: true, index: true },
-  expiresAt:{ type: Date, required: true, index: true }, // TTL index
+  tokenHash:{ type: String, required: true, unique: true },
+  expiresAt:{ type: Date, required: true }, // TTL index
   usedAt:   { type: Date, default: null },
 });
 
