@@ -111,6 +111,7 @@ export default function Login() {
         const res = await axios.post(`${BACKEND_URL}/auth/login`, { username, password: pw });
         localStorage.setItem("token", res.data.token);
         localStorage.setItem("username", res.data.username);
+        localStorage.setItem("userId", res.data.userId);
         document.cookie = `token=${res.data.token}; path=/`;
         window.dispatchEvent(new Event("login-success"));
         toast.success("✅ Login successful!");
