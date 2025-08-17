@@ -1,43 +1,66 @@
-import mongoose from "mongoose";
+// server/config/db.ts
+import mongoose, { Connection } from "mongoose";
 
-// Use a type-safe workaround for global.mongoose
-const globalWithMongoose = global as typeof globalThis & {
-  mongoose: {
-    conn: mongoose.Connection | null;
-    promise: Promise<mongoose.Connection> | null;
-  };
+/** Cache across reloads (Node/Next pattern) */
+type Cached = {
+  conn: Connection | null;
+  promise: Promise<Connection> | null;
 };
 
-// Initialize global.mongoose if it doesn't exist
-if (!globalWithMongoose.mongoose) {
-  globalWithMongoose.mongoose = { conn: null, promise: null };
+// Augment global for TypeScript
+declare global {
+  // eslint-disable-next-line no-var
+  var __mongoose: Cached | undefined;
 }
 
-async function dbConnect(): Promise<mongoose.Connection> {
-  const MONGODB_URI = process.env.MONGODB_URI;
+const cached: Cached = global.__mongoose ?? (global.__mongoose = { conn: null, promise: null });
 
-  if (!MONGODB_URI) {
-    console.error(
-      "MONGODB_URI is not defined. Please check your environment variables."
-    );
-    process.exit(1);
+export default async function dbConnect(): Promise<Connection> {
+  const URI = process.env.MONGO_URI || process.env.MONGODB_URI || "";
+
+  if (!URI) {
+    // Prefer throwing so the caller can decide whether to continue
+    const msg = "Mongo connection string not set (MONGO_URI / MONGODB_URI).";
+    console.warn(`⚠️ ${msg}`);
+    throw new Error(msg);
   }
 
-  if (globalWithMongoose.mongoose.conn) {
-    return globalWithMongoose.mongoose.conn;
-  }
+  // If already connected/connecting, reuse it
+  if (cached.conn) return cached.conn;
 
-  if (!globalWithMongoose.mongoose.promise) {
-    globalWithMongoose.mongoose.promise = mongoose
-      .connect(MONGODB_URI, {
-        dbName: "test", // Replace with your actual DB name
+  if (!cached.promise) {
+    // Optional: turn on strictQuery (recommended on modern Mongoose)
+    // mongoose.set("strictQuery", true);
+
+    cached.promise = mongoose
+      .connect(URI, {
+        dbName: process.env.MONGODB_DB || "thumbbat",
         bufferCommands: false,
+        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 10000,
+        autoIndex: false,
       })
-      .then((mongoose) => mongoose.connection);
+      .then((m) => {
+        const conn = m.connection;
+
+        // Attach listeners once
+        conn.on("connected", () => console.log("✅ MongoDB connected"));
+        conn.on("error", (err) => console.error("❌ MongoDB error:", err));
+        conn.on("disconnected", () => console.warn("⚠️ MongoDB disconnected"));
+
+        return conn;
+      });
   }
 
-  globalWithMongoose.mongoose.conn = await globalWithMongoose.mongoose.promise;
-  return globalWithMongoose.mongoose.conn;
+  cached.conn = await cached.promise;
+  return cached.conn;
 }
 
-export default dbConnect;
+/** (Optional) helper to close connection on shutdown/tests */
+export async function dbDisconnect(): Promise<void> {
+  if (cached.conn) {
+    await mongoose.disconnect();
+    cached.conn = null;
+    cached.promise = null;
+  }
+}
