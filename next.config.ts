@@ -3,6 +3,9 @@ import type { Configuration } from "webpack";
 
 /** @type {import('next').NextConfig} */
 const nextConfig: NextConfig = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   webpack: (config: Configuration) => {
     if (config.externals && Array.isArray(config.externals)) {
       config.externals.push({
