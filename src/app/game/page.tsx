@@ -1,21 +1,24 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { socketService } from "@/services/socketService";
 import Scoreboard from "@/components/Scoreboard";
 import MoveSelection from "@/components/MoveSelection";
 import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
 import GameMoveImages from "@/components/GameMoveImages";
 import opStartImg from "@/public/images/start-r.png";
 import plStartImg from "@/public/images/start.png";
+import { getSocket } from "@/src/lib/socket";
+import type { RoundStartPayload, Snapshot } from "@/src/types/realtime";
+import { Socket } from "socket.io-client";
+
+type TossPhase = "idle" | "calling" | "waiting-call" | "showing-result" | "choosing" | "waiting-choice" | "done";
 
 const Game = () => {
   const router = useRouter();
   const [mode, setMode] = useState<"bot" | "player" | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTime, setSearchTime] = useState(0);
-  const [matchFound, setMatchFound] = useState(false);
   const [opponent, setOpponent] = useState<string | null>(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [score, setScore] = useState<{
@@ -38,18 +41,83 @@ const Game = () => {
   const [showGameStartPopup, setShowGameStartPopup] = useState(false); // ✅ New: Game start popup
   const [playerMovesHistory, setPlayerMovesHistory] = useState<number[]>([]);
   const [botMovesHistory, setBotMovesHistory] = useState<number[]>([]);
-  const [gameResults, setGameResults] = useState<string[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [roomId, setRoomId] = useState<string | null>(null);
 
-  const updateGameResults = useCallback((result: string) => {
-    setGameResults((prevResults: string[]) => [...prevResults, result]);
+  const [tossPhase, setTossPhase] = useState<TossPhase>("idle");
+  const [callerId, setCallerId] = useState<string | null>(null);
+  const [isCaller, setIsCaller] = useState(false);
+  const [tossCountdown, setTossCountdown] = useState<number>(0);
+  const [tossCall, setTossCall] = useState<"heads" | "tails" | null>(null);
+  const [tossOutcome, setTossOutcome] = useState<"heads" | "tails" | null>(null);
+  const [tossWinnerId, setTossWinnerId] = useState<string | null>(null);
+  const [iChooseCountdown, setIChooseCountdown] = useState<number>(0);
+  const socketRef = useRef<Socket | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
+  const [roundCountdown, setRoundCountdown] = useState<number>(0);
+  const [hasPickedThisRound, setHasPickedThisRound] = useState(false);
+
+  const myIdRef = useRef<string>("");
+  const opponentIdRef = useRef<string>("");
+  const cancelRoundCountdownRef = useRef<null | (() => void)>(null);
+
+  useEffect(() => {
+    const s = socketRef.current;
+    if (!s) return;
+    const roomId = localStorage.getItem("mp_roomId");
+    const token = localStorage.getItem("mp_token");
+    if (roomId && token) {
+      s.emit("resume:join", { roomId, token, name: myName });
+    }
+  }, [socketRef.current?.id]);
+
+  const [myName, setMyName] = useState("You");
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const n = localStorage.getItem("username");
+      if (n) setMyName(n);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!searching) return;
+  
+    setSearchError(null);
+    setSearchTime(0);
+  
+    const startedAt = Date.now();
+  
+    const int = setInterval(() => {
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      setSearchTime(secs);
+    }, 1000);
+  
+    const kill = setTimeout(() => {
+      // tell server we're leaving the queue
+      try {
+        const s = socketRef.current;
+        s?.emit("queue:leave");
+      } catch {}
+  
+      // reset UI
+      setSearching(false);
+      setMode(null);
+      setSearchTime(0);
+      setSearchError("No player is active right now. Please try again.");
+    }, 60_000);
+  
+    return () => {
+      clearInterval(int);
+      clearTimeout(kill);
+    };
+  }, [searching]);
 
   const restartGame = () => {
     setMode(null);
     setSearching(false);
     setSearchTime(0);
-    setMatchFound(false);
     setGameStarted(false);
     setScore({ user: 0, opponent: 0, firstInningScore: null });
     setInning(null);
@@ -66,59 +134,211 @@ const Game = () => {
     if (!localStorage.getItem("token")) {
       router.push("/login");
     }
+  }, [router]);
 
-    // Connect socket service
-    socketService.connect();
-
-    // Set up event listeners using socketService methods
-    socketService.onMatchFound((data) => {
-      setOpponent(data.opponent);
-      setMatchFound(true);
-      setSearching(false);
-      setGameStarted(true);
-      setMode("player");
-      setInning(data.role);
-      setShowGameStartPopup(true);
-
-      setTimeout(() => {
-        setShowGameStartPopup(false);
-      }, 3000);
-    });
-
-    socketService.onNoMatchFound(() => {
-      alert("❌ No player found, try again!");
-      setMode(null);
-      setSearching(false);
-    });
-
-    socketService.onOpponentMove((move) => {
-      setOpponentMove(move);
-      if (playerMove !== null) {
-        handleGameLogic(playerMove, move);
-      }
-    });
-
-    // Cleanup
-    return () => {
-      socketService.cleanup();
-    };
-  }, [router, playerMove]);
-
-  const startSearch = () => {
+  const startPlayerSearch = () => {
+    restartGame();
+    setMode("player");
     setSearching(true);
     setSearchTime(0);
-    setMatchFound(false);
 
-    socketService.findMatch(localStorage.getItem("username") || "");
+    const s = getSocket();
+    socketRef.current = s;
 
-    const interval = setInterval(() => {
-      setSearchTime((prev) => prev + 1);
-    }, 1000);
+    s.emit("me:setName", myName);
+    s.emit("queue:join");
 
-    setTimeout(() => {
+    socketRef.current = s;
+      s.on("connect", () => {
+        myIdRef.current = s.id || "";
+    }); 
+
+    const runCountdownTo = (deadlineMs: number, setter: (n: number) => void) => {
+      setter(Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000)));
+      const int = setInterval(() => {
+        const left = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
+        setter(left);
+        if (left <= 0) clearInterval(int);
+      }, 250);
+      return () => clearInterval(int);
+    };
+    
+    s.on("move:roundStart", ({ round, deadlineAt, snapshot }: RoundStartPayload) => {
+      const myId = myIdRef.current;
+      const oppId = opponentIdRef.current;
+      const scores = snapshot.scores as Record<string, number>; // (already typed, this is extra-safe)
+    
+      const iBat = snapshot.battingId === myId;
+      setInning(iBat ? "batting" : "bowling");
+      setScore({
+        user: scores[myId] ?? 0,
+        opponent: scores[oppId] ?? 0,
+        firstInningScore: snapshot.firstInningScore,
+      });
+      setSecondInningStarted(snapshot.secondInningStarted);
+    
+      setHasPickedThisRound(false);
+      setRoundDeadline(deadlineAt);
+    
+      // reset previous countdown
+      if (cancelRoundCountdownRef.current) cancelRoundCountdownRef.current();
+      cancelRoundCountdownRef.current = runCountdownTo(deadlineAt, setRoundCountdown);
+    });
+
+    s.on("session:token", ({ roomId, token }) => {
+      localStorage.setItem("mp_roomId", roomId);
+      localStorage.setItem("mp_token", token);
+    });
+
+    s.on("state:snapshot", ({ snapshot, round }) => {
+      // Apply authoritative state
+      setInning(snapshot.battingId === s.id ? "batting" : "bowling"); // derived role
+      setScore({
+        user: snapshot.scores[s.id] ?? 0,
+        opponent: snapshot.scores[opponentSocketId] ?? 0, // you can compute via players array you saved
+        firstInningScore: snapshot.firstInningScore,
+      });
+      setSecondInningStarted(snapshot.secondInningStarted);
+      setGameStarted(!snapshot.gameOver); // if gameOver, show popup/winner
+      // Optionally rebuild countdown if round is ongoing
+    });
+
+    // match found
+    s.on("match:found", (payload: {
+      roomId: string;
+      players: { id: string; name: string }[];
+      callerId: string;
+    }) => {
+      const me = s.id;
+      const opp = payload.players.find(p => p.id !== me);
+      opponentIdRef.current = opp?.id ?? "";
+      setOpponent(opp?.name || "Opponent");
       setSearching(false);
-      clearInterval(interval);
-    }, 20000);
+      setRoomId(payload.roomId);
+      setCallerId(payload.callerId);
+      setIsCaller(payload.callerId === s.id);
+      // tell UI to start toss
+    });
+
+    // toss start
+    s.on("toss:start", ({ roomId, callerId, timeoutMs }: { roomId: string; callerId: string; timeoutMs: number }) => {
+      setTossPhase(callerId === s.id ? "calling" : "waiting-call");
+      startCountdown(timeoutMs, setTossCountdown);
+    });
+
+    // toss result
+    s.on("toss:result", (p: { roomId: string; call: "heads" | "tails"; outcome: "heads" | "tails"; winnerId: string }) => {
+      setTossPhase("showing-result");
+      setTossCall(p.call);
+      setTossOutcome(p.outcome);
+      setTossWinnerId(p.winnerId);
+    });
+
+    // winner chooses
+    s.on("toss:yourTurnToChoose", ({ timeoutMs }: { timeoutMs: number }) => {
+      setTossPhase("choosing");
+      startCountdown(timeoutMs, setIChooseCountdown);
+    });
+    s.on("toss:opponentChoosing", ({ timeoutMs }: { timeoutMs: number }) => {
+      setTossPhase("waiting-choice");
+      startCountdown(timeoutMs, setIChooseCountdown);
+    });
+
+    s.on("move:roundResult", ({ moves, outcome, applyAfterMs, snapshot }: {
+      moves: Record<string, number>;
+      outcome: any;
+      applyAfterMs: number;
+      snapshot: Snapshot;
+    }) => {
+      const myId = myIdRef.current;
+      const oppId = opponentIdRef.current;
+    
+      setPlayerMove(moves[myId]);
+      setOpponentMove(moves[oppId]);
+      setIsAnimating(true);
+    
+      setTimeout(() => {
+        setIsAnimating(false);
+    
+        const scores = snapshot.scores;
+        const iBat = snapshot.battingId === myId;
+        setInning(iBat ? "batting" : "bowling");
+        setScore({
+          user: scores[myId] ?? 0,
+          opponent: scores[oppId] ?? 0,
+          firstInningScore: snapshot.firstInningScore,
+        });
+        setSecondInningStarted(snapshot.secondInningStarted);
+    
+        if (snapshot.gameOver) {
+          setIsGameOver(true);
+          setShowPopup(true);
+          const winnerName =
+            snapshot.winnerId === myId
+              ? (myName || "You")
+              : (opponent || "Opponent");
+          setWinner(`${winnerName} Wins`);
+        }
+    
+        setPlayerMove(null);
+        setOpponentMove(null);
+        setHasPickedThisRound(false);
+        setRoundDeadline(null);
+        setRoundCountdown(0);
+      }, applyAfterMs);
+    });
+
+
+    // final
+    s.on("toss:final", (p: {
+      roomId: string;
+      winnerId: string;
+      choice: "bat" | "bowl";
+      battingId: string;
+      bowlingId: string;
+    }) => {
+      setTossPhase("done");
+      // map to your existing state:
+      const iBat = p.battingId === s.id;
+      setInning(iBat ? "batting" : "bowling");
+      setGameStarted(true); // enter your normal game screen
+      // (you can also show a small “You’re batting/bowling” popup)
+    });
+
+    s.on("opponent:left", () => {
+      setIsGameOver(true);
+      setShowPopup(true);
+      setWinner("Opponent left. You win by walkover 🏆");
+    });
+    
+    s.on("game:walkover", ({ snapshot }) => {
+      setIsGameOver(true);
+      setShowPopup(true);
+      setWinner("Opponent left. You win by walkover 🏆");
+    });
+  };
+
+  // helper: countdowns
+  const startCountdown = (ms: number, setter: (n: number) => void) => {
+    const total = Math.ceil(ms / 1000);
+    setter(total);
+    let left = total;
+    const int = setInterval(() => {
+      left -= 1;
+      setter(left);
+      if (left <= 0) clearInterval(int);
+    }, 1000);
+  };
+
+  const callHeadsOrTails = (call: "heads" | "tails") => {
+    if (!roomId || !socketRef.current) return;
+    setTossCall(call);
+    socketRef.current.emit("toss:call", { roomId, call });
+  };
+
+  const chooseBatOrBowl = (choice: "bat" | "bowl") => {
+    if (!roomId || !socketRef.current) return;
+    socketRef.current.emit("toss:choose", { roomId, choice });
   };
 
   // Example of a more sophisticated transition matrix considering move, inning, and score difference
@@ -204,13 +424,31 @@ const Game = () => {
   };
 
   const playMove = (move: number) => {
-    if (isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup) return;
+    if (
+      isGameOver ||
+      isAnimating ||
+      !gameStarted ||
+      showInningsOverlay ||
+      showPopup ||
+      showGameStartPopup
+    )
+      return;
 
-    setIsAnimating(true);
     setPlayerMove(move);
     setPlayerMovesHistory((prevHistory) => [...prevHistory, move]);
 
+    if (mode === "player") {
+      if (hasPickedThisRound) return;
+      if (!roundDeadline || Date.now() > roundDeadline) return;
+      socketRef.current?.emit("move:select", { roomId, move });
+      setHasPickedThisRound(true);
+      setPlayerMove(move);         
+      return;
+    }
+
     if (mode === "bot") {
+      setIsAnimating(true);
+
       const scoreDifference = score.user - score.opponent;
 
       if (inning === "batting" || inning === "bowling") {
@@ -219,8 +457,6 @@ const Game = () => {
         setBotMovesHistory((prevHistory) => [...prevHistory, botMove]);
         handleGameLogic(move, botMove);
       }
-    } else {
-      socketService.sendMove(move);
     }
     setTimeout(() => {
       setIsAnimating(false);
@@ -231,7 +467,6 @@ const Game = () => {
     setIsGameOver(true);
     setShowPopup(true);
 
-    let result = "draw";
     let winnerMessage = "🟡 It's a Draw!";
     if (userScore === opponentScore) {
       setWinner(winnerMessage);
@@ -241,17 +476,9 @@ const Game = () => {
           ? localStorage.getItem("username") || "Player"
           : opponent || "Opponent";
       setWinner(winnerMessage + " Wins");
-      result = userScore > opponentScore ? "win" : "lose";
     }
 
-    updateGameResults(result);
     updateTransitionMatrix();
-
-    socketService.gameOver({
-      username: localStorage.getItem("username") || "",
-      userScore: userScore,
-      opponentScore: opponentScore,
-    });
   };
 
   const handleGameLogic = (userMove: number, opponentMove: number) => {
@@ -347,6 +574,9 @@ const Game = () => {
           }, 1000);
         }
       }
+
+      setOpponentMove(null);
+      setPlayerMove(null);
     };
     // Set animation completion handlers
     playerAnimationComplete = false;
@@ -423,19 +653,17 @@ const Game = () => {
               Play Against Rizzwon, the Bot 🤖
             </button>
             <div className="relative">
-              <button
-                className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold opacity-50 cursor-not-allowed"
-                disabled
-              >
+              <button className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold "
+              onClick={startPlayerSearch}>
                 Play Against Player 🏏
               </button>
-              <span className="absolute top-0 right-0 bg-red-500 text-white text-xs px-2 py-1 rounded-full transform translate-x-2 -translate-y-2">
-                Coming Soon
-              </span>
             </div>
           </div>
         )}
 
+        {!mode && !gameStarted && searchError && (
+          <p className="mt-3 text-sm text-red-300">{searchError}</p>
+        )}
         {searching && (
           <div className="text-lg mt-4">
             Searching for a player...{" "}
@@ -443,10 +671,83 @@ const Game = () => {
           </div>
         )}
 
+        {/* TOSS OVERLAYS (only in multiplayer before gameStarted) */}
+        {mode === "player" && !gameStarted && tossPhase !== "idle" && tossPhase !== "done" && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-40">
+            <div className="bg-gray-800 p-6 rounded-xl shadow-xl w-[92%] max-w-md text-center">
+              {tossPhase === "calling" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-4">🪙 Your call!</h3>
+                  <p className="mb-3">Choose heads or tails</p>
+                  <div className="flex gap-4 justify-center mb-4">
+                    <button
+                      className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
+                      onClick={() => callHeadsOrTails("heads")}
+                    >
+                      Heads
+                    </button>
+                    <button
+                      className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
+                      onClick={() => callHeadsOrTails("tails")}
+                    >
+                      Tails
+                    </button>
+                  </div>
+                  <p className="text-sm opacity-80">Auto-pick in {tossCountdown}s…</p>
+                </>
+              )}
+
+              {tossPhase === "waiting-call" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-2">🪙 Waiting for opponent to call…</h3>
+                  <p className="text-sm opacity-80">Auto-pick for them in {tossCountdown}s</p>
+                </>
+              )}
+
+              {tossPhase === "showing-result" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-3">🪙 Toss Result</h3>
+                  <p className="mb-1">Call: <span className="text-yellow-300">{tossCall}</span></p>
+                  <p className="mb-3">Outcome: <span className="text-green-300">{tossOutcome}</span></p>
+                  <p>{tossWinnerId === socketRef.current?.id ? "You won the toss!" : `${opponent} won the toss.`}</p>
+                </>
+              )}
+
+              {tossPhase === "choosing" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-3">You won—choose your start</h3>
+                  <div className="flex gap-4 justify-center mb-4">
+                    <button
+                      className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
+                      onClick={() => chooseBatOrBowl("bat")}
+                    >
+                      Bat First
+                    </button>
+                    <button
+                      className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
+                      onClick={() => chooseBatOrBowl("bowl")}
+                    >
+                      Bowl First
+                    </button>
+                  </div>
+                  <p className="text-sm opacity-80">Auto-pick in {iChooseCountdown}s…</p>
+                </>
+              )}
+
+              {tossPhase === "waiting-choice" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-2">Opponent is choosing…</h3>
+                  <p className="text-sm opacity-80">Auto-pick in {iChooseCountdown}s</p>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {gameStarted && (
           <>
             <p className="text-xl mb-2">
-              {localStorage.getItem("username")}, you are{" "}
+              {myName}, you are{" "}
               <span className="text-yellow-400">{inning}</span>
             </p>
 
@@ -457,26 +758,45 @@ const Game = () => {
             />
             <div className="flex justify-center gap-6 mb-4">
               <GameMoveImages
-                move={playerMove === null ? 0 : playerMove}
+                playerMove={playerMove === null ? 0 : playerMove}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={true}
                 startImage={plStartImg.src}
               />
               <GameMoveImages
-                move={opponentMove === null ? 0 : opponentMove}
+                playerMove={playerMove === null ? 0 : playerMove}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={false}
                 startImage={opStartImg.src}
               />
             </div>
             <MoveSelection
-              playerMove={playerMove === null ? 0 : playerMove}
+              playerMove={playerMove ?? 0}
               playMove={playMove}
-              isDisabled={isGameOver || isAnimating || !gameStarted || showInningsOverlay || showPopup || showGameStartPopup}
+              isDisabled={
+                isGameOver ||
+                isAnimating ||
+                !gameStarted ||
+                showInningsOverlay ||
+                showPopup ||
+                showGameStartPopup ||
+                mode === "player" && hasPickedThisRound
+              }
             />
-            <OpponentMoveDisplay
-              opponent={opponent || "Opponent"}
-              opponentMove={opponentMove === null ? 0 : opponentMove}
-              isAnimating={isAnimating}
-            />
+
+            {mode === "player" && roundDeadline && !isGameOver && (
+              <p className="mt-2 text-sm opacity-80">
+                Pick your move in <span className="text-yellow-400">{roundCountdown}s</span>
+              </p>
+            )}
+
+            {playerMove && opponentMove && (
+              <OpponentMoveDisplay
+                opponent={opponent || "Opponent"}
+                opponentMove={opponentMove === null ? 0 : opponentMove}
+                isAnimating={isAnimating}
+              />
+            )}
           </>
         )}
 
