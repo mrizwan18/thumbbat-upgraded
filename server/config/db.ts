@@ -16,7 +16,7 @@ declare global {
 const cached: Cached = global.__mongoose ?? (global.__mongoose = { conn: null, promise: null });
 
 export default async function dbConnect(): Promise<Connection> {
-  const URI = process.env.MONGO_URI || process.env.MONGODB_URI || "";
+  const URI = process.env.MONGODB_URI || process.env.MONGO_URI || "";
 
   if (!URI) {
     // Prefer throwing so the caller can decide whether to continue
