@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Scoreboard from "@/components/Scoreboard";
 import MoveSelection from "@/components/MoveSelection";
 import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
@@ -16,6 +16,7 @@ const plStartImg = "/images/start.png";
 
 const Game = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<"bot" | "player" | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTime, setSearchTime] = useState(0);
@@ -62,6 +63,9 @@ const Game = () => {
   const myIdRef = useRef<string>("");
   const opponentIdRef = useRef<string>("");
   const cancelRoundCountdownRef = useRef<null | (() => void)>(null);
+  const [waiting, setWaiting] = useState<null | { code: string; expiresAt: number }>(null);
+  const [waitCountdown, setWaitCountdown] = useState<number>(0);
+  const waitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const s = socketRef.current;
@@ -113,6 +117,96 @@ const Game = () => {
       clearTimeout(kill);
     };
   }, [searching]);
+
+  useEffect(() => {
+    const s = socketRef.current;
+    if (!s) return;
+    const myName = (typeof window !== "undefined" && localStorage.getItem("username")) || `Player-${s.id?.slice(0,4)}`;
+  
+    // Always set name
+    s.emit("me:setName", myName);
+  
+    const hostCode = searchParams.get("host");
+    const joinCode = searchParams.get("join");
+  
+    if (hostCode) {
+      s.emit("room:create", { code: hostCode.toUpperCase(), name: myName });
+    } else if (joinCode) {
+      s.emit("room:joinByCode", { code: joinCode.toUpperCase(), name: myName });
+    }
+  }, [socketRef.current, searchParams]);
+
+  useEffect(() => {
+    const s = socketRef.current;
+    if (!s) return;
+  
+    const onWaiting = (p: { code: string; roomId: string; expiresAt: number }) => {
+      setWaiting({ code: p.code, expiresAt: p.expiresAt });
+      startWaitCountdown(p.expiresAt);
+    };
+    const onTimeout = (p: { code: string; roomId: string }) => {
+      setWaiting(null);
+      if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; }
+      // Redirect back to plain /game and show a small UI toast/banner of your choice
+      setTimeout(() => router.replace("/game?m=timeout"), 200);
+    };
+    const onExists = (p: { code: string }) => {
+      setWaiting(null);
+      alert(`Room ${p.code} already exists. Try joining instead.`);
+      router.replace("/game");
+    };
+    const onNotFound = (p: { code: string }) => {
+      setWaiting(null);
+      alert(`Room ${p.code} not found.`);
+      router.replace("/game");
+    };
+    const onFull = (p: { code: string }) => {
+      setWaiting(null);
+      alert(`Room ${p.code} is full.`);
+      router.replace("/game");
+    };
+  
+    // Reuse your existing handler for match:found (toss will start next)
+    const onMatchFound = (payload: any) => {
+      // You already set opponent, gameStarted, etc. in your code on match:found.
+      // Make sure to clear waiting UI:
+      setWaiting(null);
+      if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; }
+      // then continue your normal flow...
+    };
+  
+    s.on("room:waiting", onWaiting);
+    s.on("room:timeout", onTimeout);
+    s.on("room:exists", onExists);
+    s.on("room:notFound", onNotFound);
+    s.on("room:full", onFull);
+    s.on("match:found", onMatchFound);
+  
+    // you already have session:token handler elsewhere—keep it.
+  
+    return () => {
+      s.off("room:waiting", onWaiting);
+      s.off("room:timeout", onTimeout);
+      s.off("room:exists", onExists);
+      s.off("room:notFound", onNotFound);
+      s.off("room:full", onFull);
+      s.off("match:found", onMatchFound);
+    };
+  }, [socketRef.current, router]);
+
+  function startWaitCountdown(expiresAt: number) {
+    if (waitTimerRef.current) clearInterval(waitTimerRef.current);
+    const tick = () => {
+      const ms = Math.max(0, expiresAt - Date.now());
+      setWaitCountdown(Math.ceil(ms / 1000));
+      if (ms <= 0 && waitTimerRef.current) {
+        clearInterval(waitTimerRef.current);
+        waitTimerRef.current = null;
+      }
+    };
+    tick();
+    waitTimerRef.current = setInterval(tick, 250);
+  }
 
   const restartGame = () => {
     setMode(null);
@@ -645,7 +739,32 @@ const Game = () => {
       <div className="flex flex-col items-center justify-center min-h-[80vh]">
         <h2 className="text-4xl font-bold mb-6">🎮 Play the Game</h2>
 
-        {!mode && !gameStarted && (
+        {waiting && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="rounded-2xl border border-white/10 bg-gray-900 p-6 w-[90%] max-w-md text-center">
+            <h3 className="text-xl font-semibold">Waiting for an opponent…</h3>
+            <p className="mt-2 text-white/70">
+              Room code: <span className="font-mono">{waiting.code}</span>
+            </p>
+            <p className="mt-1 text-white/70">Expires in {waitCountdown}s</p>
+            <div className="mt-4 flex justify-center gap-3">
+              <button
+                className="rounded-xl border border-white/15 px-4 py-2 hover:bg-white/5"
+                onClick={() => {
+                  const s = socketRef.current;
+                  if (s) s.emit("room:leave", { code: waiting.code });
+                  setWaiting(null);
+                  if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; }
+                  router.replace("/game");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+        {!waiting && !mode && !gameStarted && (
           <div className="flex gap-6 relative">
             <button
               className="bg-blue-500 px-6 py-3 rounded text-white text-lg font-semibold"
