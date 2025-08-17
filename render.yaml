@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: thumbbat-socket
+    env: node
+    rootDir: server
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5001
+
+  - type: web
+    name: thumbbat-web
+    env: node
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SOCKET_URL
+        # After first deploy, replace with the socket service URL, e.g.:
+        # value: https://thumbbat-socket.onrender.com
+        value: ""
