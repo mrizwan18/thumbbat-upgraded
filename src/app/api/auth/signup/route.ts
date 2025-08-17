@@ -1,126 +1,117 @@
-import bcrypt from "bcryptjs";
-import nodemailer from "nodemailer";
-import crypto from "crypto";
-import User from "@/server/models/User";
 import { NextResponse } from "next/server";
-import { withDb } from "@/src/utils/withDb";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { Resend } from "resend";
 
-const FRONTEND_URL =
-  process.env.NODE_ENV === "production"
-    ? process.env.PROD_FRONTEND_URL
-    : process.env.DEV_FRONTEND_URL;
+import User from "@/server/models/User";
+import VerificationToken from "@/server/models/VerificationToken";
+import dbConnect from "@/server/config/db";
 
-const transporter = nodemailer.createTransport({
-  service: "Gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY!);
+const FROM_EMAIL = process.env.EMAIL_FROM || "ThumbBat <verify@thumbat.fun>";
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
-export const POST = withDb(async (request: Request) => {
+function sha256b64url(input: string) {
+  return crypto.createHash("sha256").update(input).digest("base64url");
+}
+
+function getBaseUrl(req: Request) {
+  const envUrl = process.env.PUBLIC_FRONTEND_URL
+    || process.env.PROD_FRONTEND_URL
+    || process.env.DEV_FRONTEND_URL;
+  if (envUrl) return envUrl.replace(/\/$/, "");
+
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const host  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  return `${proto}://${host}`;
+}
+
+export const POST = async (request: Request) => {
+  await dbConnect();
+
   try {
     const { username, email, password } = await request.json();
 
     if (!username || !email || !password) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Check for existing user
-    const existingUser = await User.findOne({ username });
-    if (existingUser) {
-      return NextResponse.json(
-        { error: "Username already taken" },
-        { status: 400 }
-      );
-    }
+    // Uniqueness checks
+    const [byName, byEmail] = await Promise.all([
+      User.findOne({ username }),
+      User.findOne({ email }),
+    ]);
+    if (byName)  return NextResponse.json({ error: "Username already taken" }, { status: 400 });
+    if (byEmail) return NextResponse.json({ error: "Email already taken" }, { status: 400 });
 
-    const existingEmail = await User.findOne({ email });
-    if (existingEmail) {
-      return NextResponse.json(
-        { error: "Email already taken" },
-        { status: 400 }
-      );
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const confirmationToken = crypto.randomBytes(20).toString("hex");
-
-    const newUser = new User({
+    // Create user (unverified)
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await User.create({
       username,
       email,
-      password: hashedPassword,
-      confirmationToken,
+      password: passwordHash,
+      emailVerifiedAt: null, // add this field in your User model
     });
 
-    // Send confirmation email
-    const confirmationUrl = `${FRONTEND_URL}/confirm?token=${confirmationToken}`;
-    await sendConfirmationEmail(username, email, confirmationUrl);
-    await newUser.save();
+    // Invalidate any prior un-used tokens for this user (optional guard)
+    await VerificationToken.deleteMany({ userId: user._id, usedAt: null });
+
+    // One-time token (plain sent via email; hash stored in DB)
+    const tokenPlain = crypto.randomBytes(32).toString("base64url");
+    const tokenHash  = sha256b64url(tokenPlain);
+    const expiresAt  = new Date(Date.now() + TOKEN_TTL_MS);
+
+    await VerificationToken.create({
+      userId: user._id,
+      email,
+      tokenHash,
+      expiresAt,
+    });
+
+    const baseUrl = getBaseUrl(request);
+    const confirmationUrl = `${baseUrl}/confirm?token=${tokenPlain}`;
+
+    // Send email (Resend)
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: email,
+      subject: "Confirm your ThumbBat account",
+      html: `
+        <div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;">
+          <h2>Welcome to ThumbBat, ${username}!</h2>
+          <p>Confirm your email to finish setting up your account.</p>
+          <p>
+            <a href="${confirmationUrl}"
+               style="display:inline-block;background:#16a34a;color:#fff;padding:12px 16px;border-radius:8px;text-decoration:none">
+              Confirm my account
+            </a>
+          </p>
+          <p>If the button doesn’t work, paste this URL:</p>
+          <p style="word-break:break-all">${confirmationUrl}</p>
+          <p>This link expires in 24 hours.</p>
+        </div>
+      `,
+    });
 
     return NextResponse.json({
-      message: "User created! Please check your email to confirm your account.",
+      message: "User created. Please check your email to confirm.",
     });
-  } catch (error) {
-    console.error("Signup error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+  } catch (err: any) {
+    console.error("Signup error:", err);
+
+    // Best-effort cleanup if we created a user just now and failed to send email
+    // (Safe to no-op if nothing was created)
+    try {
+      const body = await request.clone().json().catch(() => null);
+      if (body?.email) {
+        const u = await User.findOne({ email: body.email, emailVerifiedAt: null });
+        if (u) {
+          await VerificationToken.deleteMany({ userId: u._id, usedAt: null });
+          await User.deleteOne({ _id: u._id });
+        }
+      }
+    } catch {}
+
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-});
-
-async function sendConfirmationEmail(
-  username: string,
-  email: string,
-  confirmationUrl: string
-) {
-  const emailHtml = `
-    <html>
-      <body style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-          <h2 style="color: #333333; text-align: center;">Welcome to ThumbBat!</h2>
-          <p style="color: #555555; font-size: 16px; line-height: 1.5;">
-            Hello <strong>${username}</strong>,
-          </p>
-          <p style="color: #555555; font-size: 16px; line-height: 1.5;">
-            Thank you for signing up! Please confirm your account by clicking the button below:
-          </p>
-          <table role="presentation" cellspacing="0" cellpadding="0" style="margin-top: 20px;">
-            <tr>
-              <td style="background-color: #4CAF50; border-radius: 5px;">
-                <a href="${confirmationUrl}" style="display: inline-block; background-color: #4CAF50; color: white; padding: 15px 30px; text-decoration: none; font-size: 16px; border-radius: 5px; text-align: center;">
-                  Confirm My Account
-                </a>
-              </td>
-            </tr>
-          </table>
-          <p style="color: #555555; font-size: 16px; line-height: 1.5;">
-            If the button above does not work, please copy and paste the following URL into your browser:
-          </p>
-          <p style="color: #555555; font-size: 16px; line-height: 1.5;">
-            ${confirmationUrl}
-          </p>
-          <p style="color: #555555; font-size: 16px; line-height: 1.5;">
-            If you did not sign up for this account, please ignore this email.
-          </p>
-          <p style="color: #888888; font-size: 14px; text-align: center; margin-top: 30px;">
-            &copy; ${new Date().getFullYear()} ThumbBat. All rights reserved.
-          </p>
-        </div>
-      </body>
-    </html>
-  `;
-
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: email,
-    subject: "ThumbBat Account Confirmation",
-    html: emailHtml,
-  };
-
-  await transporter.sendMail(mailOptions);
-}
+};
