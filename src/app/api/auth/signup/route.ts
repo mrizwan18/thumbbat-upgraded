@@ -8,7 +8,7 @@ import VerificationToken from "@/server/models/VerificationToken";
 import dbConnect from "@/server/config/db";
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
-const FROM_EMAIL = process.env.EMAIL_FROM || "ThumbBat <verify@thumbat.fun>";
+const FROM_EMAIL = process.env.EMAIL_FROM || "cs@thumbbat.fun";
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 function sha256b64url(input: string) {
