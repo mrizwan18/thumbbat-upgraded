@@ -38,6 +38,10 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  emailVerifiedAt:{
+    type: Date,
+    default: null,
+  },
 });
 
 export default mongoose.models.User || mongoose.model("User", userSchema);
