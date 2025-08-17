@@ -6,13 +6,13 @@ import Scoreboard from "@/components/Scoreboard";
 import MoveSelection from "@/components/MoveSelection";
 import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
 import GameMoveImages from "@/components/GameMoveImages";
-import opStartImg from "@/public/images/start-r.png";
-import plStartImg from "@/public/images/start.png";
 import { getSocket } from "@/src/lib/socket";
 import type { RoundStartPayload, Snapshot } from "@/src/types/realtime";
 import { Socket } from "socket.io-client";
 
 type TossPhase = "idle" | "calling" | "waiting-call" | "showing-result" | "choosing" | "waiting-choice" | "done";
+const opStartImg = "/images/start-r.png";
+const plStartImg = "/images/start.png";
 
 const Game = () => {
   const router = useRouter();
@@ -761,13 +761,13 @@ const Game = () => {
                 playerMove={playerMove === null ? 0 : playerMove}
                 opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={true}
-                startImage={plStartImg.src}
+                startImage={plStartImg}
               />
               <GameMoveImages
                 playerMove={playerMove === null ? 0 : playerMove}
                 opponentMove={opponentMove === null ? 0 : opponentMove}
                 isPlayer={false}
-                startImage={opStartImg.src}
+                startImage={opStartImg}
               />
             </div>
             <MoveSelection
