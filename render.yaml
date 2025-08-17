@@ -1,28 +1,39 @@
 services:
   - type: web
+    name: thumbbat-web
+    env: node
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # This injects the socket service URL at build time
+      - key: NEXT_PUBLIC_SOCKET_URL
+        fromService:
+          type: web
+          name: thumbbat-socket
+          property: host
+
+  - type: web
     name: thumbbat-socket
     env: node
     rootDir: server
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start
+    healthCheckPath: /healthz
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 5001
-
-  - type: web
-    name: thumbbat-web
-    env: node
-    rootDir: web
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start
-    autoDeploy: true
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: NEXT_PUBLIC_SOCKET_URL
-        # After first deploy, replace with the socket service URL, e.g.:
-        # value: https://thumbbat-socket.onrender.com
-        value: ""
+      # Allow only the web origin in CORS (the host is injected)
+      - key: WEB_ORIGIN
+        fromService:
+          type: web
+          name: thumbbat-web
+          property: host
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: thumbbat
