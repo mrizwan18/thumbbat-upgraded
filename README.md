@@ -19,8 +19,6 @@ Before you begin, ensure you have the following installed:
 ```bash
 MONGODB_URI=your_mongodb_uri
 JWT_SECRET=your_jwt_secret
-EMAIL_USER=your_gmail_address
-EMAIL_PASS=your_gmail_app_password
 NEXT_PUBLIC_SOCKET_URL=http://localhost:5001
 DEV_FRONTEND_URL=http://localhost:3000
 PROD_FRONTEND_URL=your_production_url
@@ -32,8 +30,6 @@ NEXT_PUBLIC_FILTER_USERNAME=false
 ```bash
 MONGODB_URI=your_mongodb_uri
 JWT_SECRET=your_jwt_secret
-EMAIL_USER=your_gmail_address
-EMAIL_PASS=your_gmail_app_password
 NEXT_PUBLIC_SOCKET_URL=http://localhost:5001
 DEV_FRONTEND_URL=http://localhost:3000
 PROD_FRONTEND_URL=your_production_url
