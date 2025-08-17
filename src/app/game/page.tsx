@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Scoreboard from "@/components/Scoreboard";
 import MoveSelection from "@/components/MoveSelection";
@@ -8,6 +8,9 @@ import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
 import GameMoveImages from "@/components/GameMoveImages";
 import opStartImg from "@/public/images/start-r.png";
 import plStartImg from "@/public/images/start.png";
+import { getSocket } from "@/src/lib/socket";
+
+type TossPhase = "idle" | "calling" | "waiting-call" | "showing-result" | "choosing" | "waiting-choice" | "done";
 
 const Game = () => {
   const router = useRouter();
@@ -37,6 +40,57 @@ const Game = () => {
   const [playerMovesHistory, setPlayerMovesHistory] = useState<number[]>([]);
   const [botMovesHistory, setBotMovesHistory] = useState<number[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [roomId, setRoomId] = useState<string | null>(null);
+
+  const [tossPhase, setTossPhase] = useState<TossPhase>("idle");
+  const [callerId, setCallerId] = useState<string | null>(null);
+  const [isCaller, setIsCaller] = useState(false);
+  const [tossCountdown, setTossCountdown] = useState<number>(0);
+  const [tossCall, setTossCall] = useState<"heads" | "tails" | null>(null);
+  const [tossOutcome, setTossOutcome] = useState<"heads" | "tails" | null>(null);
+  const [tossWinnerId, setTossWinnerId] = useState<string | null>(null);
+  const [iChooseCountdown, setIChooseCountdown] = useState<number>(0);
+  const socketRef = useRef<ReturnType<typeof getSocket> | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const myId = useMemo(() => {
+    return socketRef.current?.id || "";
+  }, [socketRef.current?.id]);
+
+  const myName = useMemo(() => localStorage.getItem("username") || "You", []);
+
+  useEffect(() => {
+    if (!searching) return;
+  
+    setSearchError(null);
+    setSearchTime(0);
+  
+    const startedAt = Date.now();
+  
+    const int = setInterval(() => {
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      setSearchTime(secs);
+    }, 1000);
+  
+    const kill = setTimeout(() => {
+      // tell server we're leaving the queue
+      try {
+        const s = socketRef.current;
+        s?.emit("queue:leave");
+      } catch {}
+  
+      // reset UI
+      setSearching(false);
+      setMode(null);
+      setSearchTime(0);
+      setSearchError("No player is active right now. Please try again.");
+    }, 60_000);
+  
+    return () => {
+      clearInterval(int);
+      clearTimeout(kill);
+    };
+  }, [searching]);
 
   const restartGame = () => {
     setMode(null);
@@ -59,6 +113,103 @@ const Game = () => {
       router.push("/login");
     }
   }, [router]);
+
+  const startPlayerSearch = () => {
+    restartGame();
+    setMode("player");
+    setSearching(true);
+    setSearchTime(0);
+
+    const s = getSocket();
+    socketRef.current = s;
+
+    s.emit("me:setName", myName);
+    s.emit("queue:join");
+
+    // match found
+    s.on("match:found", (payload: {
+      roomId: string;
+      players: { id: string; name: string }[];
+      callerId: string;
+    }) => {
+      setSearching(false);
+      setOpponent(payload.players.find(p => p.id !== s.id)?.name || "Opponent");
+      setRoomId(payload.roomId);
+      setCallerId(payload.callerId);
+      setIsCaller(payload.callerId === s.id);
+      // tell UI to start toss
+    });
+
+    // toss start
+    s.on("toss:start", ({ roomId, callerId, timeoutMs }: { roomId: string; callerId: string; timeoutMs: number }) => {
+      setTossPhase(callerId === s.id ? "calling" : "waiting-call");
+      startCountdown(timeoutMs, setTossCountdown);
+    });
+
+    // toss result
+    s.on("toss:result", (p: { roomId: string; call: "heads" | "tails"; outcome: "heads" | "tails"; winnerId: string }) => {
+      setTossPhase("showing-result");
+      setTossCall(p.call);
+      setTossOutcome(p.outcome);
+      setTossWinnerId(p.winnerId);
+    });
+
+    // winner chooses
+    s.on("toss:yourTurnToChoose", ({ timeoutMs }: { timeoutMs: number }) => {
+      setTossPhase("choosing");
+      startCountdown(timeoutMs, setIChooseCountdown);
+    });
+    s.on("toss:opponentChoosing", ({ timeoutMs }: { timeoutMs: number }) => {
+      setTossPhase("waiting-choice");
+      startCountdown(timeoutMs, setIChooseCountdown);
+    });
+
+    // final
+    s.on("toss:final", (p: {
+      roomId: string;
+      winnerId: string;
+      choice: "bat" | "bowl";
+      battingId: string;
+      bowlingId: string;
+    }) => {
+      setTossPhase("done");
+      // map to your existing state:
+      const iBat = p.battingId === s.id;
+      setInning(iBat ? "batting" : "bowling");
+      setGameStarted(true); // enter your normal game screen
+      // (you can also show a small “You’re batting/bowling” popup)
+    });
+
+    s.on("opponent:left", () => {
+      setSearching(false);
+      setShowPopup(true);
+      setWinner("Opponent left. You win by walkover ");
+      setIsGameOver(true);
+    });
+  };
+
+  // helper: countdowns
+  const startCountdown = (ms: number, setter: (n: number) => void) => {
+    const total = Math.ceil(ms / 1000);
+    setter(total);
+    let left = total;
+    const int = setInterval(() => {
+      left -= 1;
+      setter(left);
+      if (left <= 0) clearInterval(int);
+    }, 1000);
+  };
+
+  const callHeadsOrTails = (call: "heads" | "tails") => {
+    if (!roomId || !socketRef.current) return;
+    setTossCall(call);
+    socketRef.current.emit("toss:call", { roomId, call });
+  };
+
+  const chooseBatOrBowl = (choice: "bat" | "bowl") => {
+    if (!roomId || !socketRef.current) return;
+    socketRef.current.emit("toss:choose", { roomId, choice });
+  };
 
   // Example of a more sophisticated transition matrix considering move, inning, and score difference
   const transitionMatrix = {
@@ -363,17 +514,94 @@ const Game = () => {
               Play Against Rizzwon, the Bot 🤖
             </button>
             <div className="relative">
-              <button className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold ">
+              <button className="bg-green-500 px-6 py-3 rounded text-white text-lg font-semibold "
+              onClick={startPlayerSearch}>
                 Play Against Player 🏏
               </button>
             </div>
           </div>
         )}
 
+        {!mode && !gameStarted && searchError && (
+          <p className="mt-3 text-sm text-red-300">{searchError}</p>
+        )}
         {searching && (
           <div className="text-lg mt-4">
             Searching for a player...{" "}
             <span className="text-yellow-400">{searchTime}s</span>
+          </div>
+        )}
+
+        {/* TOSS OVERLAYS (only in multiplayer before gameStarted) */}
+        {mode === "player" && !gameStarted && tossPhase !== "idle" && tossPhase !== "done" && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-40">
+            <div className="bg-gray-800 p-6 rounded-xl shadow-xl w-[92%] max-w-md text-center">
+              {tossPhase === "calling" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-4">🪙 Your call!</h3>
+                  <p className="mb-3">Choose heads or tails</p>
+                  <div className="flex gap-4 justify-center mb-4">
+                    <button
+                      className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
+                      onClick={() => callHeadsOrTails("heads")}
+                    >
+                      Heads
+                    </button>
+                    <button
+                      className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
+                      onClick={() => callHeadsOrTails("tails")}
+                    >
+                      Tails
+                    </button>
+                  </div>
+                  <p className="text-sm opacity-80">Auto-pick in {tossCountdown}s…</p>
+                </>
+              )}
+
+              {tossPhase === "waiting-call" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-2">🪙 Waiting for opponent to call…</h3>
+                  <p className="text-sm opacity-80">Auto-pick for them in {tossCountdown}s</p>
+                </>
+              )}
+
+              {tossPhase === "showing-result" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-3">🪙 Toss Result</h3>
+                  <p className="mb-1">Call: <span className="text-yellow-300">{tossCall}</span></p>
+                  <p className="mb-3">Outcome: <span className="text-green-300">{tossOutcome}</span></p>
+                  <p>{tossWinnerId === socketRef.current?.id ? "You won the toss!" : `${opponent} won the toss.`}</p>
+                </>
+              )}
+
+              {tossPhase === "choosing" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-3">You won—choose your start</h3>
+                  <div className="flex gap-4 justify-center mb-4">
+                    <button
+                      className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
+                      onClick={() => chooseBatOrBowl("bat")}
+                    >
+                      Bat First
+                    </button>
+                    <button
+                      className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
+                      onClick={() => chooseBatOrBowl("bowl")}
+                    >
+                      Bowl First
+                    </button>
+                  </div>
+                  <p className="text-sm opacity-80">Auto-pick in {iChooseCountdown}s…</p>
+                </>
+              )}
+
+              {tossPhase === "waiting-choice" && (
+                <>
+                  <h3 className="text-2xl font-bold mb-2">Opponent is choosing…</h3>
+                  <p className="text-sm opacity-80">Auto-pick in {iChooseCountdown}s</p>
+                </>
+              )}
+            </div>
           </div>
         )}
 
