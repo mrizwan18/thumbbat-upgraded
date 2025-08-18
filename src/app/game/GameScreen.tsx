@@ -204,7 +204,9 @@ function GameScreenInner() {
                 } else if (roomId) {
                   playMultiplayerMove(roomId, move);
                 }
-              }}
+              }
+            }
+            secondInningStarted={secondInningStarted}
             />
           </div>
         ) : null}

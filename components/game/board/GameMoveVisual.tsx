@@ -14,19 +14,28 @@ type Phase = "idle" | "bouncing" | "reveal";
 export default function GameMoveVisual({
   playerMove,
   opponentMove,
-  bounceMs = 850, // fist bounce duration before reveal
-  size = 140, // image box size (px)
+  bounceMs = 900, // ~2 bounces
+  size = 140,
 }: {
-  playerMove: number | null; // 1..6 (null = no reveal yet)
-  opponentMove: number | null; // 1..6 (null = no reveal yet)
+  playerMove: number | null;     // 1..6 (null = no move this round)
+  opponentMove: number | null;   // 1..6 (null = no move this round)
   bounceMs?: number;
   size?: number;
 }) {
   const prefersReducedMotion = useReducedMotion();
   const [phase, setPhase] = useState<Phase>("idle");
+
+  // What we are currently *showing* on screen (persists between rounds)
+  const [displayed, setDisplayed] = useState<{ player: number | null; opp: number | null }>({
+    player: null,
+    opp: null,
+  });
+
+  // Track which pair we last revealed (to detect a new round)
+  const lastPairKeyRef = useRef<string | null>(null);
   const bounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Preload all assets once (browser only)
+  // Preload assets once
   useEffect(() => {
     if (typeof window === "undefined") return;
     const toPreload = [
@@ -38,38 +47,58 @@ export default function GameMoveVisual({
     toPreload.forEach((src) => {
       const img = new Image();
       img.src = src;
-      // decode speeds up paint where supported
       (img as any).decode?.().catch(() => {});
     });
   }, []);
 
-  // When both moves arrive → bounce fists → reveal both
+  // Orchestrate: on a new pair -> bounce (over current images) -> swap to new pair -> reveal
   useEffect(() => {
     const bothHaveMoves = playerMove != null && opponentMove != null;
+
     if (bothHaveMoves) {
-      if (prefersReducedMotion) {
+      const newKey = `${playerMove}-${opponentMove}`;
+      if (newKey !== lastPairKeyRef.current) {
+        // New round's pair
+        if (prefersReducedMotion) {
+          setDisplayed({ player: playerMove!, opp: opponentMove! });
+          setPhase("reveal");
+          lastPairKeyRef.current = newKey;
+          return;
+        }
+
+        setPhase("bouncing"); // bounce over whatever is currently displayed
+        if (bounceTimer.current) clearTimeout(bounceTimer.current);
+        bounceTimer.current = setTimeout(() => {
+          setDisplayed({ player: playerMove!, opp: opponentMove! });
+          setPhase("reveal");
+          lastPairKeyRef.current = newKey;
+        }, bounceMs);
+      } else {
+        // Same pair already shown → ensure reveal stays
         setPhase("reveal");
-        return;
       }
-      setPhase("bouncing");
-      if (bounceTimer.current) clearTimeout(bounceTimer.current);
-      bounceTimer.current = setTimeout(() => setPhase("reveal"), bounceMs);
     } else {
-      setPhase("idle");
+      // Not a full pair this moment:
+      // If we've never revealed anything, show idle; otherwise keep the last reveal visible.
+      if (displayed.player == null && displayed.opp == null) {
+        setPhase("idle");
+      } else {
+        setPhase("reveal");
+      }
     }
+
     return () => {
       if (bounceTimer.current) clearTimeout(bounceTimer.current);
     };
-  }, [playerMove, opponentMove, bounceMs, prefersReducedMotion]);
+  }, [playerMove, opponentMove, bounceMs, prefersReducedMotion, displayed.player, displayed.opp]);
 
   const boxStyle = useMemo(() => ({ width: size, height: size }), [size]);
 
   const showPlayerSrc =
-    phase === "reveal" && playerMove ? PLAYER_MOVE_SRC[playerMove] : PLAYER_IDLE;
+    displayed.player != null ? PLAYER_MOVE_SRC[displayed.player] : PLAYER_IDLE;
   const showOppSrc =
-    phase === "reveal" && opponentMove ? OPP_MOVE_SRC[opponentMove] : OPP_IDLE;
+    displayed.opp != null ? OPP_MOVE_SRC[displayed.opp] : OPP_IDLE;
 
-  // Compact bounce keyframes
   const fistBounceAnim =
     phase === "bouncing"
       ? {
@@ -98,7 +127,6 @@ export default function GameMoveVisual({
 }
 
 function ImageBox({ src, alt }: { src: string; alt: string }) {
-  // <img> for fastest decode; container sets size
   return (
     <div className="relative h-full w-full grid place-items-center">
       <AnimatePresence mode="wait">
