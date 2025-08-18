@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function OpponentMoveDisplay({
@@ -8,9 +8,21 @@ export default function OpponentMoveDisplay({
   revealedMove,
 }: {
   opponent: string;
-  revealedMove: number | null;
+  revealedMove: number | null; // current-round value (null while waiting)
 }) {
-  const revealed = typeof revealedMove === "number";
+  // Persist last revealed move until a new one comes in
+  const [lastMove, setLastMove] = useState<number | null>(null);
+  const [animKey, setAnimKey] = useState(0); // bump to re-animate on new move
+
+  useEffect(() => {
+    if (typeof revealedMove === "number" && revealedMove !== lastMove) {
+      setLastMove(revealedMove);
+      setAnimKey((k) => k + 1);
+    }
+  }, [revealedMove, lastMove]);
+
+  const waitingThisRound = revealedMove == null; // current round not revealed yet
+  const hasAnyMove = lastMove !== null;
 
   return (
     <div
@@ -18,30 +30,40 @@ export default function OpponentMoveDisplay({
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      title={revealed ? `${opponent} chose ${revealedMove}` : `${opponent} hasn’t revealed yet`}
+      title={
+        waitingThisRound
+          ? hasAnyMove
+            ? `${opponent}'s last move: ${lastMove} (waiting for new move…)`
+            : `${opponent} hasn’t revealed yet`
+          : `${opponent} chose ${revealedMove}`
+      }
     >
-      <span className="text-white/70">⏱ {opponent} chose</span>
+      <span className="text-white/70">
+        ⏱ {waitingThisRound ? "Waiting…" : `${opponent} chose`}
+      </span>
 
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
-          key={revealed ? revealedMove : "pending"}
+          key={hasAnyMove ? `mv-${animKey}-${lastMove}` : "pending"}
           initial={{ rotateX: 90, opacity: 0 }}
           animate={{ rotateX: 0, opacity: 1 }}
           exit={{ rotateX: -90, opacity: 0 }}
-          transition={{ duration: 0.28, ease: "easeOut" }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
           className={[
             "inline-grid h-7 w-7 place-items-center rounded-lg font-bold tabular-nums",
-            revealed
+            hasAnyMove
               ? "bg-emerald-400 text-gray-900 shadow-[0_8px_30px_rgba(16,185,129,.35)]"
               : "bg-white/10 text-white/70",
           ].join(" ")}
           aria-label={
-            revealed
-              ? `${opponent} chose ${revealedMove}`
+            hasAnyMove
+              ? `${opponent}'s last revealed move: ${lastMove}${
+                  waitingThisRound ? " (waiting for new move)" : ""
+                }`
               : `${opponent} has not chosen yet`
           }
         >
-          {revealed ? revealedMove : "—"}
+          {hasAnyMove ? lastMove : "—"}
         </motion.span>
       </AnimatePresence>
     </div>
