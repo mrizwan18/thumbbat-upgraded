@@ -113,12 +113,10 @@ export default function GameBoard({
         )}
 
         {/* small reveal chip (only once both are known) */}
-        {playerMove != null && opponentMove != null && (
-          <OpponentMoveDisplay
+        <OpponentMoveDisplay
             opponent={opponentName}
             revealedMove={opponentMove}
           />
-        )}
       </div>
     </div>
   );
