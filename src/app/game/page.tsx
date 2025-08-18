@@ -11,7 +11,6 @@ import { getSocket } from "@/src/lib/socket";
 import type { RoundStartPayload, Snapshot } from "@/src/types/realtime";
 import type { Socket } from "socket.io-client";
 
-/* -------------------- Suspense wrapper fixes CSR bailout -------------------- */
 export default function GamePage() {
   return (
     <Suspense fallback={<PageFallback />}>
@@ -29,8 +28,6 @@ function PageFallback() {
     </div>
   );
 }
-
-/* ---------------------------------- Page ---------------------------------- */
 
 type TossPhase =
   | "idle"
@@ -61,10 +58,10 @@ function Game() {
     opponent: 0,
     firstInningScore: null as number | null,
   });
-
   const [inning, setInning] = useState<"batting" | "bowling" | null>(null);
   const [isGameOver, setIsGameOver] = useState(false);
   const [winner, setWinner] = useState<string | null>(null);
+
   const [opponentMove, setOpponentMove] = useState<number | null>(null);
   const [playerMove, setPlayerMove] = useState<number | null>(null);
   const [secondInningStarted, setSecondInningStarted] = useState(false);
@@ -88,6 +85,8 @@ function Game() {
   const [waitCountdown, setWaitCountdown] = useState<number>(0);
   const waitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const [roomId, setRoomId] = useState<string | null>(null);
+
   const socketRef = useRef<Socket | null>(null);
   const myIdRef = useRef<string>("");
   const opponentIdRef = useRef<string>("");
@@ -95,20 +94,20 @@ function Game() {
 
   const [myName, setMyName] = useState("You");
 
-  // login guard
+  // Require login for /game
   useEffect(() => {
     if (!localStorage.getItem("token")) {
       router.replace("/login?next=/game");
     }
   }, [router]);
 
-  // read username
+  // Load username
   useEffect(() => {
     const n = localStorage.getItem("username");
     if (n) setMyName(n);
   }, []);
 
-  // ensure socket exists early + identify
+  // Ensure socket exists & identify
   useEffect(() => {
     if (!socketRef.current) {
       const s = getSocket();
@@ -116,19 +115,23 @@ function Game() {
       s.on("connect", () => (myIdRef.current = s.id || ""));
       const nm = localStorage.getItem("username") || `Player-${s.id?.slice(0, 4)}`;
       s.emit("me:setName", nm);
+      s.emit("me:setUser", {
+        userId: localStorage.getItem("userId"),
+        name: nm,
+      });
     }
   }, []);
 
-  // resume if we had a room token
+  // Resume session if token available
   useEffect(() => {
     const s = socketRef.current;
     if (!s) return;
-    const roomId = localStorage.getItem("mp_roomId");
-    const token = localStorage.getItem("mp_token");
-    if (roomId && token) s.emit("resume:join", { roomId, token, name: myName });
+    const rid = localStorage.getItem("mp_roomId");
+    const tok = localStorage.getItem("mp_token");
+    if (rid && tok) s.emit("resume:join", { roomId: rid, token: tok, name: myName });
   }, [myName]);
 
-  // react to ?host / ?join
+  // Handle ?host / ?join
   useEffect(() => {
     const s = socketRef.current;
     if (!s) return;
@@ -138,7 +141,7 @@ function Game() {
     if (join) s.emit("room:joinByCode", { code: join.toUpperCase(), name: myName });
   }, [searchParams, myName]);
 
-  // queue searching timers
+  // Searching timers
   useEffect(() => {
     if (!searching) return;
     setSearchError(null);
@@ -158,7 +161,7 @@ function Game() {
     };
   }, [searching]);
 
-  // central socket handlers (avoid duplicate listeners)
+  // Central socket handlers
   useEffect(() => {
     const s = socketRef.current;
     if (!s) return;
@@ -173,8 +176,9 @@ function Game() {
       return () => clearInterval(int);
     };
 
-    // room lifecycle for join/create
+    // Room lifecycle (join/create)
     const onWaiting = (p: { code: string; roomId: string; expiresAt: number }) => {
+      setRoomId(p.roomId);
       setWaiting({ code: p.code, expiresAt: p.expiresAt });
       if (waitTimerRef.current) clearInterval(waitTimerRef.current);
       const tick = () => {
@@ -217,6 +221,7 @@ function Game() {
       players: { id: string; name: string }[];
       callerId: string;
     }) => {
+      setRoomId(payload.roomId);
       const me = s.id;
       const opp = payload.players.find((p) => p.id !== me);
       opponentIdRef.current = opp?.id ?? "";
@@ -327,8 +332,8 @@ function Game() {
     };
     const onWalkover = onOpponentLeft;
 
-    const onSessionToken = ({ roomId, token }: { roomId: string; token: string }) => {
-      localStorage.setItem("mp_roomId", roomId);
+    const onSessionToken = ({ roomId: rid, token }: { roomId: string; token: string }) => {
+      localStorage.setItem("mp_roomId", rid);
       localStorage.setItem("mp_token", token);
     };
 
@@ -377,7 +382,7 @@ function Game() {
     };
   }, [router, myName, opponent]);
 
-  /* ------------------------------ UI helpers ------------------------------ */
+  /* ------------------------------ Helpers ------------------------------ */
 
   const startCountdown = (ms: number, setter: (n: number) => void) => {
     const total = Math.ceil(ms / 1000);
@@ -407,19 +412,27 @@ function Game() {
     setTossPhase("idle");
   };
 
-  /* ------------------------------ Quick Match ----------------------------- */
+  /* --------------------------- Quick Match (Queue) --------------------------- */
 
   const startPlayerSearch = () => {
     restartGame();
     setMode("player");
     setSearching(true);
-    const s = socketRef.current!;
+    const s = socketRef.current || getSocket();
+    socketRef.current = s;
     s.emit("me:setName", myName);
     s.emit("me:setUser", { userId: localStorage.getItem("userId"), name: myName });
     s.emit("queue:join");
   };
 
-  /* ------------------------------ Bot Gameplay ---------------------------- */
+  const cancelPlayerSearch = () => {
+    socketRef.current?.emit("queue:leave");
+    setSearching(false);
+    setMode(null);
+    setSearchTime(0);
+  };
+
+  /* ----------------------------- Bot Gameplay ----------------------------- */
 
   const transitionMatrix = {
     batting: {
@@ -488,12 +501,13 @@ function Game() {
 
     if (mode === "player") {
       if (hasPickedThisRound || !roundDeadline || Date.now() > roundDeadline) return;
-      socketRef.current?.emit("move:select", { move });
+      if (!roomId) return;
+      socketRef.current?.emit("move:select", { roomId, move });
       setHasPickedThisRound(true);
       return;
     }
 
-    // bot logic
+    // Bot logic
     const diff = score.user - score.opponent;
     const botMove = getBotMove(move, inning!, diff);
     setOpponentMove(botMove);
@@ -556,15 +570,22 @@ function Game() {
     else setWinner((userScore > opponentScore ? myName : opponent || "Opponent") + " Wins");
   };
 
-  /* ------------------------------ Join/Create UI ----------------------------- */
+  /* -------------------------- Join/Create Room Card -------------------------- */
 
   function JoinRoomCard() {
     const [code, setCode] = useState("");
     const [err, setErr] = useState<string | null>(null);
     const [toast, setToast] = useState<string | null>(null);
-    const s = socketRef.current!;
 
     const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const s = socketRef.current || getSocket();
+    if (!socketRef.current) socketRef.current = s;
+
+    const ensureIdentified = () => {
+      s.emit("me:setName", myName);
+      s.emit("me:setUser", { userId: localStorage.getItem("userId"), name: myName });
+    };
+
     const genCode = (len = 6) => {
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
       let out = "";
@@ -577,7 +598,8 @@ function Game() {
       setErr(null);
       const c = normalized;
       if (c.length < 4 || c.length > 8) return setErr("Enter a 4–8 character code");
-      s.emit("me:setName", myName);
+      ensureIdentified();
+      setMode("player");
       s.emit("room:joinByCode", { code: c, name: myName });
     };
 
@@ -591,7 +613,8 @@ function Game() {
       } finally {
         setTimeout(() => setToast(null), 2200);
       }
-      s.emit("me:setName", myName);
+      ensureIdentified();
+      setMode("player");
       s.emit("room:create", { code: c, name: myName });
     };
 
@@ -654,11 +677,12 @@ function Game() {
       <div className="mx-auto max-w-7xl px-6 pt-16 pb-16">
         <div className="flex flex-col items-center text-center">
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">Play ThumbBat</h1>
-          <p className="mt-2 text-white/70">Quick match or private room—your call.</p>
+          <p className="mt-2 text-white/70">Quick match, private room, or solo vs bot.</p>
         </div>
 
+        {/* Lobby cards */}
         {!waiting && !mode && !gameStarted && (
-          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
             {/* Quick Match */}
             <motion.div
               initial={{ opacity: 0, y: 8 }}
@@ -668,28 +692,55 @@ function Game() {
               <h3 className="text-xl font-semibold">Quick Match</h3>
               <p className="mt-1 text-sm text-white/70">We’ll find someone for you right now.</p>
               <div className="mt-4 flex items-center gap-3">
-                <button
-                  className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-gray-900 font-semibold shadow-[0_8px_30px_rgba(16,185,129,.35)] hover:brightness-95 transition-[filter,transform] active:scale-95"
-                  onClick={startPlayerSearch}
-                >
-                  Find opponent
-                </button>
-                {searching && (
-                  <span className="text-sm text-white/70">
-                    Searching… <span className="text-yellow-300">{searchTime}s</span>
-                  </span>
+                {!searching ? (
+                  <button
+                    className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-gray-900 font-semibold shadow-[0_8px_30px_rgba(16,185,129,.35)] hover:brightness-95 transition-[filter,transform] active:scale-95"
+                    onClick={startPlayerSearch}
+                  >
+                    Find opponent
+                  </button>
+                ) : (
+                  <>
+                    <span className="text-sm text-white/80">
+                      Searching… <span className="text-yellow-300">{searchTime}s</span>
+                    </span>
+                    <button
+                      onClick={cancelPlayerSearch}
+                      className="rounded-2xl border border-white/15 px-4 py-2 text-sm text-white/90 hover:bg-white/5"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
               </div>
               {searchError && <p className="mt-2 text-sm text-rose-300">{searchError}</p>}
-              <div className="mt-4 text-xs text-white/50">1 min timeout if we can’t match you.</div>
+              <div className="mt-4 text-xs text-white/50">1 minute timeout if no match.</div>
             </motion.div>
 
             {/* Join/Create */}
             <JoinRoomCard />
+
+            {/* Play vs Bot */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md"
+            >
+              <h3 className="text-xl font-semibold">Solo Practice</h3>
+              <p className="mt-1 text-sm text-white/70">Warm up against Rizzwon 🤖</p>
+              <div className="mt-4">
+                <button
+                  onClick={startBotGame}
+                  className="inline-flex items-center justify-center rounded-2xl bg-indigo-400 px-5 py-3 text-gray-900 font-semibold shadow-[0_8px_30px_rgba(129,140,248,.35)] hover:brightness-95 transition-[filter,transform] active:scale-95"
+                >
+                  Play vs Bot
+                </button>
+              </div>
+            </motion.div>
           </div>
         )}
 
-        {/* Waiting overlay (hosted private room) */}
+        {/* Waiting overlay (hosted/joined private room until opponent arrives) */}
         <AnimatePresence>
           {waiting && (
             <motion.div
@@ -706,7 +757,7 @@ function Game() {
                 <p className="mt-1 text-white/70">Expires in {waitCountdown}s</p>
                 <div className="mt-4 flex justify-center gap-3">
                   <button
-                    className="rounded-xl border border-white/15 px-4 py-2 hover:bg-white/5"
+                    className="rounded-2xl border border-white/15 px-4 py-2 hover:bg-white/5"
                     onClick={() => {
                       const s = socketRef.current;
                       if (s) s.emit("room:leave", { code: waiting.code });
@@ -726,7 +777,7 @@ function Game() {
           )}
         </AnimatePresence>
 
-        {/* Multiplayer toss overlays */}
+        {/* Toss overlays (multiplayer pre-game) */}
         {mode === "player" && !gameStarted && tossPhase !== "idle" && tossPhase !== "done" && (
           <div className="fixed inset-0 bg-black/70 grid place-items-center z-40">
             <div className="bg-gray-800 p-6 rounded-xl shadow-xl w-[92%] max-w-md text-center">
@@ -737,8 +788,9 @@ function Game() {
                     <button
                       className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
                       onClick={() => {
+                        if (!roomId) return;
                         setTossCall("heads");
-                        socketRef.current?.emit("toss:call", { call: "heads" });
+                        socketRef.current?.emit("toss:call", { roomId, call: "heads" });
                       }}
                     >
                       Heads
@@ -746,8 +798,9 @@ function Game() {
                     <button
                       className="bg-indigo-500 hover:bg-indigo-600 px-5 py-2 rounded"
                       onClick={() => {
+                        if (!roomId) return;
                         setTossCall("tails");
-                        socketRef.current?.emit("toss:call", { call: "tails" });
+                        socketRef.current?.emit("toss:call", { roomId, call: "tails" });
                       }}
                     >
                       Tails
@@ -776,16 +829,22 @@ function Game() {
               {tossPhase === "choosing" && (
                 <>
                   <h3 className="text-2xl font-bold mb-3">You won—choose your start</h3>
-                  <div className="flex gap-4 justify-center mb-4">
+                <div className="flex gap-4 justify-center mb-4">
                     <button
                       className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
-                      onClick={() => socketRef.current?.emit("toss:choose", { choice: "bat" })}
+                      onClick={() => {
+                        if (!roomId) return;
+                        socketRef.current?.emit("toss:choose", { roomId, choice: "bat" });
+                      }}
                     >
                       Bat First
                     </button>
                     <button
                       className="bg-emerald-500 hover:bg-emerald-600 px-5 py-2 rounded"
-                      onClick={() => socketRef.current?.emit("toss:choose", { choice: "bowl" })}
+                      onClick={() => {
+                        if (!roomId) return;
+                        socketRef.current?.emit("toss:choose", { roomId, choice: "bowl" });
+                      }}
                     >
                       Bowl First
                     </button>
