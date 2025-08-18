@@ -1,4 +1,4 @@
-const PLAYER_MOVE_SRC: Record<number, string> = {
+export const PLAYER_MOVE_SRC: Record<number, string> = {
   1: "/images/1u.png",
   2: "/images/2u.png",
   3: "/images/3u.png",
@@ -7,7 +7,7 @@ const PLAYER_MOVE_SRC: Record<number, string> = {
   6: "/images/6u.png",
 };
 
-const OPP_MOVE_SRC: Record<number, string> = {
+export const OPP_MOVE_SRC: Record<number, string> = {
   1: "/images/1c.png",
   2: "/images/2c.png",
   3: "/images/3c.png",
@@ -15,6 +15,9 @@ const OPP_MOVE_SRC: Record<number, string> = {
   5: "/images/5c.png",
   6: "/images/6c.png",
 };
+
+export const PLAYER_IDLE = "/images/start.png";
+export const OPP_IDLE = "/images/start-r.png";
 
 export const getPlayerMoveImage = (move: number): string =>
   PLAYER_MOVE_SRC[move] ?? "";

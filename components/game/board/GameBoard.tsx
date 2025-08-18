@@ -2,12 +2,12 @@
 
 import React from "react";
 import Scoreboard from "@/components/Scoreboard";
+
+import GameMoveVisual from "@/components/game/board/GameMoveVisual";
 import MoveSelection from "@/components/MoveSelection";
 import OpponentMoveDisplay from "@/components/OpponentMoveDisplay";
-import GameMoveImages from "@/components/GameMoveImages";
 
-const opStartImg = "/images/start-r.png";
-const plStartImg = "/images/start.png";
+type Inning = "batting" | "bowling" | null;
 
 export default function GameBoard({
   myName,
@@ -23,8 +23,12 @@ export default function GameBoard({
 }: {
   myName: string;
   opponentName: string;
-  inning: "batting" | "bowling" | null;
-  score: { user: number; opponent: number; firstInnings?: number; firstInningScore: number | null };
+  inning: Inning;
+  score: {
+    user: number;
+    opponent: number;
+    firstInningScore: number | null;
+  };
   playerMove: number | null;
   opponentMove: number | null;
   roundCountdown: number;
@@ -34,30 +38,50 @@ export default function GameBoard({
 }) {
   return (
     <div className="grid grid-cols-1 gap-6">
+      {/* who is batting/bowling */}
       <div className="text-center">
         <p className="text-lg">
-          {myName}, you are <span className="text-yellow-400">{inning}</span>
+          {myName}, you are{" "}
+          <span className="text-yellow-400">{inning ?? "…"}</span>
         </p>
       </div>
 
-      <Scoreboard userScore={score.user} opponentScore={score.opponent} opponentName={opponentName} />
+      {/* scores */}
+      <Scoreboard
+        userScore={score.user}
+        opponentScore={score.opponent}
+        opponentName={opponentName}
+      />
 
-      <div className="flex justify-center gap-6 mb-2">
-        <GameMoveImages playerMove={playerMove ?? 0} opponentMove={opponentMove ?? 0} isPlayer={true} startImage={plStartImg} />
-        <GameMoveImages playerMove={playerMove ?? 0} opponentMove={opponentMove ?? 0} isPlayer={false} startImage={opStartImg} />
+      {/* hands: idle fists → bounce → reveal both moves */}
+      <div className="flex justify-center gap-6">
+        <GameMoveVisual
+          playerMove={playerMove ?? null}
+          opponentMove={opponentMove ?? null}
+        />
       </div>
 
+      {/* controls + status */}
       <div className="flex flex-col items-center">
-        <MoveSelection playerMove={playerMove ?? 0} playMove={onPick} isDisabled={!canPick} />
+        <MoveSelection
+          playerMove={playerMove ?? null}
+          onPick={onPick}
+          disabled={!canPick}
+        />
 
         {isMultiplayer && roundCountdown > 0 && (
           <p className="mt-2 text-sm opacity-80">
-            Pick your move in <span className="text-yellow-400">{roundCountdown}s</span>
+            Pick your move in{" "}
+            <span className="text-yellow-400">{roundCountdown}s</span>
           </p>
         )}
 
-        {playerMove && opponentMove && (
-          <OpponentMoveDisplay opponent={opponentName} opponentMove={opponentMove ?? 0} isAnimating={false} />
+        {/* small reveal chip (only once both are known) */}
+        {playerMove != null && opponentMove != null && (
+          <OpponentMoveDisplay
+            opponent={opponentName}
+            revealedMove={opponentMove}
+          />
         )}
       </div>
     </div>
