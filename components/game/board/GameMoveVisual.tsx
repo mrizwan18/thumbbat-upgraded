@@ -2,123 +2,90 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import {
-  PLAYER_MOVE_SRC,
-  OPP_MOVE_SRC,
-  PLAYER_IDLE,
-  OPP_IDLE,
-} from "@/lib/getMoveImage";
+import { PLAYER_MOVE_SRC, OPP_MOVE_SRC, PLAYER_IDLE, OPP_IDLE } from "@/lib/getMoveImage";
 
 type Phase = "idle" | "bouncing" | "reveal";
 
 export default function GameMoveVisual({
   playerMove,
   opponentMove,
-  bounceMs = 900, // ~2 bounces
+  bounceMs = 900,
   size = 140,
 }: {
-  playerMove: number | null;     // 1..6 (null = no move this round)
-  opponentMove: number | null;   // 1..6 (null = no move this round)
+  playerMove: number | null;
+  opponentMove: number | null;
   bounceMs?: number;
   size?: number;
 }) {
-  const prefersReducedMotion = useReducedMotion();
+  const rPref = useReducedMotion();
   const [phase, setPhase] = useState<Phase>("idle");
 
-  // What we are currently *showing* on screen (persists between rounds)
-  const [displayed, setDisplayed] = useState<{ player: number | null; opp: number | null }>({
+  // Sticky cache of the last *fully-formed* pair we revealed
+  const [revealMoves, setRevealMoves] = useState<{ player: number | null; opp: number | null }>({
     player: null,
     opp: null,
   });
 
-  // Track which pair we last revealed (to detect a new round)
-  const lastPairKeyRef = useRef<string | null>(null);
-  const bounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the last pair that triggered animations so we only re-bounce on change
+  const lastPairRef = useRef<string>("__none__");
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  // Preload assets once
   useEffect(() => {
+    // preload (browser only)
     if (typeof window === "undefined") return;
-    const toPreload = [
-      PLAYER_IDLE,
-      OPP_IDLE,
-      ...Object.values(PLAYER_MOVE_SRC),
-      ...Object.values(OPP_MOVE_SRC),
-    ];
-    toPreload.forEach((src) => {
-      const img = new Image();
-      img.src = src;
-      (img as any).decode?.().catch(() => {});
-    });
+    [...Object.values(PLAYER_MOVE_SRC), ...Object.values(OPP_MOVE_SRC), PLAYER_IDLE, OPP_IDLE].forEach(
+      (src) => {
+        const img = new Image();
+        img.src = src;
+        (img as any).decode?.().catch(() => {});
+      }
+    );
   }, []);
 
-  // Orchestrate: on a new pair -> bounce (over current images) -> swap to new pair -> reveal
   useEffect(() => {
-    const bothHaveMoves = playerMove != null && opponentMove != null;
+    const both = playerMove != null && opponentMove != null;
+    const pairKey = both ? `${playerMove}-${opponentMove}` : "__incomplete__";
+    const changed = pairKey !== lastPairRef.current;
 
-    if (bothHaveMoves) {
-      const newKey = `${playerMove}-${opponentMove}`;
-      if (newKey !== lastPairKeyRef.current) {
-        // New round's pair
-        if (prefersReducedMotion) {
-          setDisplayed({ player: playerMove!, opp: opponentMove! });
-          setPhase("reveal");
-          lastPairKeyRef.current = newKey;
-          return;
-        }
+    // Don’t interrupt an ongoing reveal with nulls; wait for a new pair
+    if (both && changed) {
+      lastPairRef.current = pairKey;
+      setRevealMoves({ player: playerMove!, opp: opponentMove! });
 
-        setPhase("bouncing"); // bounce over whatever is currently displayed
-        if (bounceTimer.current) clearTimeout(bounceTimer.current);
-        bounceTimer.current = setTimeout(() => {
-          setDisplayed({ player: playerMove!, opp: opponentMove! });
-          setPhase("reveal");
-          lastPairKeyRef.current = newKey;
-        }, bounceMs);
-      } else {
-        // Same pair already shown → ensure reveal stays
+      if (rPref) {
         setPhase("reveal");
+        return;
       }
-    } else {
-      // Not a full pair this moment:
-      // If we've never revealed anything, show idle; otherwise keep the last reveal visible.
-      if (displayed.player == null && displayed.opp == null) {
-        setPhase("idle");
-      } else {
-        setPhase("reveal");
-      }
+      setPhase("bouncing");
+      clearTimers();
+      timers.current.push(setTimeout(() => setPhase("reveal"), bounceMs));
     }
+    // If not both: do nothing (keep the revealed images on screen)
+    return clearTimers;
+  }, [playerMove, opponentMove, bounceMs, rPref]);
 
-    return () => {
-      if (bounceTimer.current) clearTimeout(bounceTimer.current);
-    };
-  }, [playerMove, opponentMove, bounceMs, prefersReducedMotion, displayed.player, displayed.opp]);
+  function clearTimers() {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }
 
   const boxStyle = useMemo(() => ({ width: size, height: size }), [size]);
-
-  const showPlayerSrc =
-    displayed.player != null ? PLAYER_MOVE_SRC[displayed.player] : PLAYER_IDLE;
-  const showOppSrc =
-    displayed.opp != null ? OPP_MOVE_SRC[displayed.opp] : OPP_IDLE;
+  const showPlayerSrc = revealMoves.player != null ? PLAYER_MOVE_SRC[revealMoves.player] : PLAYER_IDLE;
+  const showOppSrc = revealMoves.opp != null ? OPP_MOVE_SRC[revealMoves.opp] : OPP_IDLE;
 
   const fistBounceAnim =
     phase === "bouncing"
       ? {
           y: [0, -12, 0, -6, 0],
-          transition: {
-            duration: bounceMs / 1000,
-            times: [0, 0.35, 0.55, 0.8, 1],
-            ease: "easeInOut",
-          },
+          transition: { duration: bounceMs / 1000, times: [0, 0.35, 0.55, 0.8, 1], ease: "easeInOut" },
         }
       : {};
 
   return (
     <div className="flex items-center justify-center gap-10 my-4">
-      {/* Player hand (left) */}
       <motion.div style={boxStyle} animate={fistBounceAnim}>
         <ImageBox src={showPlayerSrc} alt="Your hand" />
       </motion.div>
-
-      {/* Opponent hand (right) */}
       <motion.div style={boxStyle} animate={fistBounceAnim}>
         <ImageBox src={showOppSrc} alt="Opponent hand" />
       </motion.div>
@@ -139,10 +106,7 @@ function ImageBox({ src, alt }: { src: string; alt: string }) {
           initial={{ opacity: 0.001 }}
           animate={{ opacity: 1, transition: { duration: 0.12 } }}
           exit={{ opacity: 0, transition: { duration: 0.08 } }}
-          style={{
-            filter: "drop-shadow(0 10px 24px rgba(0,0,0,.35))",
-            imageRendering: "auto",
-          }}
+          style={{ filter: "drop-shadow(0 10px 24px rgba(0,0,0,.35))" }}
         />
       </AnimatePresence>
     </div>
