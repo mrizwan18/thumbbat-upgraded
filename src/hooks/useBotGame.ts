@@ -250,7 +250,7 @@ export function useBotGame(myName: string) {
         setPlayerMove(null);
         setOpponentMove(null);
       }, 150);
-    }, 900);
+    }, 500);
   };
 
   const canPick =
