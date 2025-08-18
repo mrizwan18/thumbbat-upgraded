@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import Image from "next/image";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home" },
@@ -111,11 +112,15 @@ export default function Navbar() {
           <div className="flex h-16 items-center justify-between">
             {/* Left: Logo */}
             <Link href="/" className="group inline-flex items-center gap-2">
-              <span className="inline-grid place-items-center h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-400 to-lime-300 text-gray-900 font-black shadow-[0_8px_30px_rgba(16,185,129,.35)] group-hover:scale-105 transition-transform">
-                🏏
-              </span>
-              <span className="text-lg font-semibold tracking-tight text-white">
-                ThumbBat
+              <span className="relative inline-block h-16 w-36 rounded-xl overflow-hidden">
+                <Image
+                  src="/thumbbat-logo.png"
+                  alt="ThumbBat logo"
+                  fill
+                  sizes="(max-width: 768px) 120px, 140px"
+                  priority
+                  className="object-contain p-1.5"
+                />
               </span>
             </Link>
 
