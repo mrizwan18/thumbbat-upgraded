@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuthGuard } from "@/src/hooks/useAuthGuard";
 import { useGameSocket } from "@/src/hooks/useGameSocket";
@@ -17,12 +17,29 @@ import GameOverModal from "@/components/game/overlays/GameOverModal";
 
 import GameBoard from "@/components/game/board/GameBoard";
 
-export default function GameScreen() {
-  // Redirect to login if unauthenticated
+/* Optional but helpful to avoid static prerender attempts */
+export const revalidate = 0;
+
+function ClientOnly({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) {
+    // Lightweight skeleton to avoid layout shift
+    return (
+      <div className="min-h-[100svh] bg-gray-950 text-white grid place-items-center">
+        <div className="animate-pulse text-white/60">Loading game…</div>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+function GameScreenInner() {
+  // Redirect if not logged in (runs safely on client after ClientOnly)
   useAuthGuard("/login?next=/game");
 
   /**
-   * Multiplayer hook (socket-driven)
+   * Multiplayer (socket) state
    */
   const {
     // identity & room
@@ -31,7 +48,7 @@ export default function GameScreen() {
     roomId,
 
     // lobby state
-    mode, // "player" | null
+    mode,
     searching,
     searchTime,
     searchError,
@@ -41,11 +58,11 @@ export default function GameScreen() {
     // private rooms
     createRoom,
     joinRoomByCode,
-    waiting,          // { code, expiresAt } | null
-    waitCountdown,    // seconds left
+    waiting,
+    waitCountdown,
     cancelWaiting,
 
-    // live game state (multiplayer)
+    // game state (multiplayer)
     gameStarted,
     inning,
     score,
@@ -58,7 +75,7 @@ export default function GameScreen() {
     winner,
     secondInningStarted,
 
-    // toss state
+    // toss
     tossPhase,
     tossCountdown,
     tossCall,
@@ -73,13 +90,11 @@ export default function GameScreen() {
   } = useGameSocket();
 
   /**
-   * Bot hook (owns all scoring/innings/winner for solo mode)
-   * We pass myName so the winner string can say “You” properly.
+   * Bot (solo) state — owns the entire bot gameplay
    */
   const {
     isBotMode,
     startBotGame,
-    endBotMode,
     opponentName: botOpponentName,
     inning: botInning,
     score: botScore,
@@ -94,7 +109,7 @@ export default function GameScreen() {
     playBotMove,
   } = useBotGame(myName);
 
-  // Merge state depending on active mode
+  // Merge state based on active mode
   const activeInning = isBotMode ? botInning : inning;
   const activeScore = isBotMode ? botScore : score;
   const activePlayerMove = isBotMode ? botPlayerMove : playerMove;
@@ -107,7 +122,7 @@ export default function GameScreen() {
 
   return (
     <div className="min-h-[100svh] bg-gray-950 text-white relative">
-      {/* background decoration */}
+      {/* Background */}
       <div className="pointer-events-none absolute -top-28 left-1/2 -translate-x-1/2 h-[42rem] w-[42rem] rounded-full bg-[radial-gradient(closest-side,_rgba(34,197,94,.22),_transparent)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,.06)_1px,transparent_1px)] bg-[size:42px_42px]" />
 
@@ -115,12 +130,10 @@ export default function GameScreen() {
         {/* Header */}
         <div className="flex flex-col items-center text-center">
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">Play ThumbBat</h1>
-          <p className="mt-2 text-white/70">
-            Quick match, private room, or solo vs bot.
-          </p>
+          <p className="mt-2 text-white/70">Quick match, private room, or solo vs bot.</p>
         </div>
 
-        {/* Lobby (visible only when not waiting / not started / not bot mode) */}
+        {/* Lobby */}
         {!waiting && !gameStarted && !isBotMode && (
           <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
             <QuickMatchCard
@@ -130,16 +143,13 @@ export default function GameScreen() {
               onStart={startQuickMatch}
               onCancel={cancelQuickMatch}
             />
-
             <JoinRoomCard
               myName={myName}
               onJoin={(code) => joinRoomByCode(code)}
               onCreate={() => createRoom()}
             />
-
             <SoloPracticeCard
               onStart={() => {
-                // enter bot mode and start the solo game
                 startBotGame();
               }}
             />
@@ -168,8 +178,6 @@ export default function GameScreen() {
               iChooseCountdown={iChooseCountdown}
               tossCall={tossCall}
               tossOutcome={tossOutcome}
-              // If your component supports it, you can pass undefined here;
-              // deciding winner UI can be based on tossOutcome + names.
               youWon={undefined}
               opponentName={opponent || "Opponent"}
               onCall={(call) => roomId && callHeadsOrTails(roomId, call)}
@@ -202,7 +210,7 @@ export default function GameScreen() {
         ) : null}
       </div>
 
-      {/* Innings overlay (shown when bot mode toggles it; multiplayer can manage its own UI) */}
+      {/* Innings overlay (bot mode controlled) */}
       <InningsOverlay
         open={!!showInningsOverlay}
         firstInningsScore={activeScore.firstInningScore}
@@ -229,7 +237,7 @@ export default function GameScreen() {
         )}
       </AnimatePresence>
 
-      {/* Game over modal (works for both modes) */}
+      {/* Game over modal (both modes) */}
       <GameOverModal
         open={!!activeGameOver}
         winner={activeWinner || ""}
@@ -237,13 +245,27 @@ export default function GameScreen() {
         opponentScore={activeScore.opponent}
         onExit={() => (window.location.href = "/")}
         onRestart={() => {
-          // Restart in bot mode immediately
-          if (!isBotMode) {
-            // leave multiplayer flow if you want to offer a bot rematch from here
-          }
+          // Rematch in bot mode for quick restart
           startBotGame();
         }}
       />
     </div>
+  );
+}
+
+export default function GameScreen() {
+  return (
+    <ClientOnly>
+      {/* Wrap anything that uses useSearchParams() somewhere inside */}
+      <Suspense
+        fallback={
+          <div className="min-h-[100svh] bg-gray-950 text-white grid place-items-center">
+            <div className="animate-pulse text-white/60">Loading…</div>
+          </div>
+        }
+      >
+        <GameScreenInner />
+      </Suspense>
+    </ClientOnly>
   );
 }
