@@ -18,21 +18,19 @@ const TOSS_CALL_TIMEOUT_MS = 15000;
 const CHOICE_TIMEOUT_MS = 15000;
 const RESULT_REVEAL_MS = 5000;
 
-const ROUND_TIMEOUT_MS = 15000;          // 15s to pick a move
-const CLIENT_ANIMATION_MS = 1500;       // clients animate then apply snapshot
-const DISCONNECT_GRACE_MS = 20000;      // 20s to reconnect before walkover
-const ROOM_WAIT_MS = 60_000; // 1 minute to find the second player
+const ROUND_TIMEOUT_MS = 15000;     // 15s to pick a move
+const CLIENT_ANIMATION_MS = 1500;   // clients animate, then apply snapshot
+const DISCONNECT_GRACE_MS = 20000;  // 20s to reconnect before walkover
+
+const ROOM_WAIT_MS = 60_000;        // private room: 60s to find second player
+
 const codeToRoomId = new Map<string, string>(); // code -> roomId
 
 type TossCall = "heads" | "tails";
 type BatOrBowl = "bat" | "bowl";
-type PlayerId = string; // we use socket ids as player IDs at runtime
+type PlayerId = string;
 
-type PlayerInfo = {
-  id: PlayerId;
-  name: string;
-};
-
+type PlayerInfo = { id: PlayerId; name: string };
 type Scores = Record<PlayerId, number>;
 
 type GameState = {
@@ -42,23 +40,30 @@ type GameState = {
   scores: Scores;
   firstInningScore: number | null;
   secondInningStarted: boolean;
-  target: number | null;         // firstInningScore + 1 when inning 2 starts
+  target: number | null;
   gameOver: boolean;
   winnerId?: PlayerId;
 };
 
 type RoundState = {
   roundNo: number;
-  deadlineAt: number;            // epoch ms when ROUND_TIMEOUT_MS expires
+  deadlineAt: number;
   timer?: NodeJS.Timeout | null;
   moves: Record<PlayerId, number | null>;
 };
 
 type RoomState = {
   id: string;
-  players: PlayerId[];            // two socket ids
-  names: Record<PlayerId, string>;
   code?: string;
+  hostId: PlayerId;                             // NEW: creator/host
+  players: PlayerId[];
+  names: Record<PlayerId, string>;
+  tokens: Record<PlayerId, string>;
+  disconnectTimers: Record<PlayerId, NodeJS.Timeout | null>;
+  waitingTimer?: NodeJS.Timeout | null;
+  expiresAt?: number;                           // NEW: room expiry
+  startedAt?: number;
+
   // Toss
   callerId?: PlayerId;
   tossCall?: TossCall;
@@ -66,15 +71,10 @@ type RoomState = {
   tossWinnerId?: PlayerId;
   callTimer?: NodeJS.Timeout | null;
   choiceTimer?: NodeJS.Timeout | null;
-  // Session resume
-  tokens: Record<PlayerId, string>;         // per-player resume token (issued once)
-  // Disconnect resilience
-  disconnectTimers: Record<PlayerId, NodeJS.Timeout | null>;
+
   // Game
   game: GameState | null;
   round: RoundState | null;
-  waitingTimer?: NodeJS.Timeout | null;
-  startedAt?: number;
 };
 
 const userIdMap = new Map<PlayerId, string | null>();
@@ -82,7 +82,7 @@ const userIdMap = new Map<PlayerId, string | null>();
 const app = express();
 const httpServer = createServer(app);
 
-// CORS for Express
+/** Express CORS */
 app.use(
   cors({
     origin: true,
@@ -91,7 +91,7 @@ app.use(
   })
 );
 
-// Socket.IO server
+/** Socket.IO */
 const io = new Server(httpServer, {
   cors: {
     origin: true,
@@ -103,13 +103,13 @@ const io = new Server(httpServer, {
   transports: ["polling", "websocket"],
 });
 
-// DB connect
+/** DB */
 dbConnect()
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((error) => console.error("❌ MongoDB connection error:", error));
 
 /** ---- In-memory state ---- */
-const queue: PlayerId[] = []; // socket ids waiting
+const queue: PlayerId[] = []; // quick match queue (socket ids)
 const rooms = new Map<string, RoomState>(); // roomId -> state
 const nameMap = new Map<PlayerId, string>(); // socketId -> name
 const socketToRoom = new Map<PlayerId, string>(); // socketId -> roomId
@@ -118,36 +118,8 @@ const socketToRoom = new Map<PlayerId, string>(); // socketId -> roomId
 const pickRandom = <T,>(arr: T[]): T => arr[crypto.randomInt(0, arr.length)];
 const randMove = () => crypto.randomInt(1, 7); // 1..6
 
-function cleanupRoom(roomId: string) {
-  const room = rooms.get(roomId);
-  if (!room) return;
-  clearTimer(room.callTimer);
-  clearTimer(room.choiceTimer);
-  if (room.round?.timer) clearTimer(room.round.timer);
-  if (room.waitingTimer) clearTimer(room.waitingTimer);
-  room.players.forEach((sid) => {
-    socketToRoom.delete(sid);
-    if (room.disconnectTimers?.[sid]) clearTimer(room.disconnectTimers[sid]);
-  });
-  if (room.code) codeToRoomId.delete(room.code); // NEW
-  rooms.delete(roomId);
-}
-function codeIsValid(code: string) {
-  return /^[A-Z0-9]{4,8}$/.test(code);
-}
-function codeRoomExists(code: string) {
-  return codeToRoomId.has(code);
-}
-
-function startTimer(ms: number, fn: () => void): NodeJS.Timeout {
-  return setTimeout(fn, ms);
-}
 function clearTimer(t?: NodeJS.Timeout | null) {
   if (t) clearTimeout(t);
-}
-
-function peerOf(room: RoomState, sid: PlayerId) {
-  return room.players.find((p) => p !== sid)!;
 }
 
 function safeEmit(target: PlayerId | PlayerId[], event: string, payload: any) {
@@ -158,19 +130,37 @@ function safeEmit(target: PlayerId | PlayerId[], event: string, payload: any) {
   }
 }
 
+function peerOf(room: RoomState, sid: PlayerId) {
+  return room.players.find((p) => p !== sid)!;
+}
+
+function codeIsValid(code: string) {
+  return /^[A-Z0-9]{4,8}$/.test(code);
+}
+function codeRoomExists(code: string) {
+  return codeToRoomId.has(code);
+}
+
 function cleanupRoom(roomId: string) {
   const room = rooms.get(roomId);
   if (!room) return;
+
   clearTimer(room.callTimer);
   clearTimer(room.choiceTimer);
   if (room.round?.timer) clearTimer(room.round.timer);
+  if (room.waitingTimer) clearTimer(room.waitingTimer);
+
   room.players.forEach((sid) => {
     socketToRoom.delete(sid);
     if (room.disconnectTimers?.[sid]) clearTimer(room.disconnectTimers[sid]);
   });
+
+  if (room.code) codeToRoomId.delete(room.code); // ensure mapping is cleaned
+
   rooms.delete(roomId);
 }
 
+/** ========= Quick-match pairing (unchanged: still auto-toss) ========= */
 function tryMatch() {
   while (queue.length >= 2) {
     const a = queue.shift()!;
@@ -179,21 +169,13 @@ function tryMatch() {
 
     const state: RoomState = {
       id: roomId,
+      hostId: a, // arbitrary; quick match has no lobby
       players: [a, b],
       names: {
         [a]: nameMap.get(a) || `Player-${a.slice(0, 4)}`,
         [b]: nameMap.get(b) || `Player-${b.slice(0, 4)}`,
       },
-      callerId: undefined,
-      tossCall: undefined,
-      tossOutcome: undefined,
-      tossWinnerId: undefined,
-      callTimer: null,
-      choiceTimer: null,
-      tokens: {
-        [a]: crypto.randomUUID(),
-        [b]: crypto.randomUUID(),
-      },
+      tokens: { [a]: crypto.randomUUID(), [b]: crypto.randomUUID() },
       disconnectTimers: { [a]: null, [b]: null },
       game: null,
       round: null,
@@ -202,14 +184,13 @@ function tryMatch() {
     rooms.set(roomId, state);
     socketToRoom.set(a, roomId);
     socketToRoom.set(b, roomId);
-
     io.sockets.sockets.get(a)?.join(roomId);
     io.sockets.sockets.get(b)?.join(roomId);
 
     // choose caller randomly
     state.callerId = pickRandom([a, b]);
 
-    // Send private session tokens for resume
+    // send private resume tokens
     safeEmit(a, "session:token", { roomId, token: state.tokens[a] });
     safeEmit(b, "session:token", { roomId, token: state.tokens[b] });
 
@@ -226,7 +207,7 @@ function tryMatch() {
   }
 }
 
-/** ---- Toss flow ---- */
+/** ================= Toss flow ================= */
 function startToss(room: RoomState) {
   io.to(room.id).emit("toss:start", {
     roomId: room.id,
@@ -234,12 +215,12 @@ function startToss(room: RoomState) {
     timeoutMs: TOSS_CALL_TIMEOUT_MS,
   });
 
-  room.callTimer = startTimer(TOSS_CALL_TIMEOUT_MS, () => {
+  room.callTimer = setTimeout(() => {
     if (!room.tossCall) {
       room.tossCall = pickRandom<TossCall>(["heads", "tails"]);
       resolveToss(room);
     }
-  });
+  }, TOSS_CALL_TIMEOUT_MS);
 }
 
 function resolveToss(room: RoomState) {
@@ -261,11 +242,10 @@ function resolveToss(room: RoomState) {
     winnerId,
   });
 
-  // Reveal for a moment; then ask winner to choose & start timer
   setTimeout(() => {
-    room.choiceTimer = startTimer(CHOICE_TIMEOUT_MS, () => {
+    room.choiceTimer = setTimeout(() => {
       finalizeChoice(room, pickRandom<BatOrBowl>(["bat", "bowl"]));
-    });
+    }, CHOICE_TIMEOUT_MS);
 
     io.to(winnerId).emit("toss:yourTurnToChoose", {
       roomId: room.id,
@@ -287,7 +267,6 @@ function finalizeChoice(room: RoomState, choice: BatOrBowl) {
       : room.players.find((p) => p !== room.tossWinnerId)!;
   const bowlingId = room.players.find((p) => p !== battingId)!;
 
-  // Initialize game state (authoritative)
   room.game = {
     inning: 1,
     battingId,
@@ -300,7 +279,6 @@ function finalizeChoice(room: RoomState, choice: BatOrBowl) {
   };
 
   room.startedAt = Date.now();
-
   room.round = null;
 
   io.to(room.id).emit("toss:final", {
@@ -311,16 +289,13 @@ function finalizeChoice(room: RoomState, choice: BatOrBowl) {
     bowlingId,
   });
 
-  // Begin first round
   startRound(room);
 }
 
-/** ---- Round / Move loop ---- */
-
+/** ================= Round / Move loop ================= */
 function startRound(room: RoomState) {
   if (!room.game || room.game.gameOver) return;
 
-  // create a new round
   const roundNo = (room.round?.roundNo || 0) + 1;
   const deadlineAt = Date.now() + ROUND_TIMEOUT_MS;
   const moves: Record<PlayerId, number | null> = {
@@ -328,17 +303,15 @@ function startRound(room: RoomState) {
     [room.game.bowlingId]: null,
   };
 
-  // clear any previous timer
   if (room.round?.timer) clearTimer(room.round.timer);
 
   room.round = {
     roundNo,
     deadlineAt,
-    timer: startTimer(ROUND_TIMEOUT_MS, () => finalizeRound(room, "timeout")),
+    timer: setTimeout(() => finalizeRound(room, "timeout"), ROUND_TIMEOUT_MS),
     moves,
   };
 
-  // Broadcast round start + authoritative snapshot
   io.to(room.id).emit("move:roundStart", {
     roomId: room.id,
     round: roundNo,
@@ -353,7 +326,7 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
   if (!g || !r) return;
   clearTimer(r.timer);
 
-  // Fill any missing moves with auto-picks
+  // fill missing picks
   (Object.keys(r.moves) as PlayerId[]).forEach((pid) => {
     if (r.moves[pid] == null) r.moves[pid] = randMove();
   });
@@ -363,23 +336,21 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
   const batMove = r.moves[battingId]!;
   const bowlMove = r.moves[bowlingId]!;
 
-  // Compute outcome per your rules
   type Outcome =
     | { type: "runs"; runsAdded: number }
     | { type: "wicketFirstInnings" }
-    | { type: "wicketSecondInnings"; winnerId: PlayerId | null } // null means tie
+    | { type: "wicketSecondInnings"; winnerId: PlayerId | null }
     | { type: "chaseComplete"; winnerId: PlayerId }
-    | { type: "inningsSwitch" }; // sent when we move from 1->2
+    | { type: "inningsSwitch" };
 
   let outcome: Outcome;
 
   if (g.inning === 1) {
     if (batMove === bowlMove) {
-      // Wicket -> first innings ends, store score, switch innings
       g.firstInningScore = g.scores[battingId];
       g.inning = 2;
       g.secondInningStarted = true;
-      g.target = g.firstInningScore + 1;
+      g.target = (g.firstInningScore ?? 0) + 1;
 
       // swap roles
       const newBatting = bowlingId;
@@ -389,30 +360,24 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
 
       outcome = { type: "wicketFirstInnings" };
     } else {
-      // Runs scored = batter's move
       g.scores[battingId] += batMove;
       outcome = { type: "runs", runsAdded: batMove };
     }
   } else {
-    // Inning 2 (chase)
+    // inning 2 chase
     if (batMove === bowlMove) {
-      // Wicket on chase -> check if target was already reached
-      // (Normally we'd have ended earlier if target reached.)
       const chasingScore = g.scores[battingId];
       const target = g.target ?? Number.MAX_SAFE_INTEGER;
-
       if (chasingScore >= target) {
         g.gameOver = true;
         g.winnerId = battingId;
         outcome = { type: "wicketSecondInnings", winnerId: battingId };
       } else {
-        // Chasing out below target -> bowling side wins
         g.gameOver = true;
         g.winnerId = bowlingId;
         outcome = { type: "wicketSecondInnings", winnerId: bowlingId };
       }
     } else {
-      // Add runs and check chase completion
       g.scores[battingId] += batMove;
       const target = g.target ?? Number.MAX_SAFE_INTEGER;
 
@@ -426,8 +391,6 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
     }
   }
 
-  // Tell clients the two moves + outcome. Clients will animate for CLIENT_ANIMATION_MS,
-  // then apply the snapshot we include (authoritative).
   io.to(room.id).emit("move:roundResult", {
     roomId: room.id,
     round: r.roundNo,
@@ -440,14 +403,10 @@ function finalizeRound(room: RoomState, reason: "bothSelected" | "timeout") {
     snapshot: packSnapshot(room),
   });
 
-  // If game continues, start next round after clients finish animation
   if (!g.gameOver) {
-    // If we just switched innings, we still start a new round
     setTimeout(() => startRound(room), CLIENT_ANIMATION_MS + 100);
   } else {
-    // Game over -> cleanup room after a short delay (optional)
     void persistMatch(room, outcome.type);
-
     setTimeout(() => cleanupRoom(room.id), 15000);
   }
 }
@@ -467,9 +426,8 @@ async function persistMatch(room: RoomState, reason: string) {
     const bUserId = userIdMap.get(B) || null;
 
     const winnerId = g.winnerId || null;
-    const loserId  = winnerId ? (winnerId === A ? B : A) : null;
+    const loserId = winnerId ? (winnerId === A ? B : A) : null;
 
-    // Build doc
     const doc = {
       roomId: room.id,
       players: [
@@ -481,17 +439,19 @@ async function persistMatch(room: RoomState, reason: string) {
       target: g.target ?? null,
       winner: winnerId
         ? {
-            user: (winnerId === A ? aUserId : bUserId)
-              ? new mongoose.Types.ObjectId(winnerId === A ? aUserId! : bUserId!)
-              : null,
+            user:
+              (winnerId === A ? aUserId : bUserId)
+                ? new mongoose.Types.ObjectId(winnerId === A ? aUserId! : bUserId!)
+                : null,
             username: winnerId === A ? aName : bName,
           }
         : { user: null, username: "" },
       loser: loserId
         ? {
-            user: (loserId === A ? aUserId : bUserId)
-              ? new mongoose.Types.ObjectId(loserId === A ? aUserId! : bUserId!)
-              : null,
+            user:
+              (loserId === A ? aUserId : bUserId)
+                ? new mongoose.Types.ObjectId(loserId === A ? aUserId! : bUserId!)
+                : null,
             username: loserId === A ? aName : bName,
           }
         : { user: null, username: "" },
@@ -503,14 +463,10 @@ async function persistMatch(room: RoomState, reason: string) {
 
     await Match.create(doc);
 
-    // Update player stats (only for real users we can identify)
-    const updates: Array<Promise<any>> = [];
-
     const bumpUser = async (idStr: string | null, isWinner: boolean, score: number) => {
       if (!idStr) return;
       const _id = new mongoose.Types.ObjectId(idStr);
 
-      // wins/losses + max high score
       await User.updateOne(
         { _id },
         {
@@ -519,7 +475,6 @@ async function persistMatch(room: RoomState, reason: string) {
         }
       );
 
-      // recompute win %
       const u = await User.findById(_id).select("wins losses");
       if (u) {
         const total = (u.wins || 0) + (u.losses || 0);
@@ -540,7 +495,6 @@ async function persistMatch(room: RoomState, reason: string) {
 function packSnapshot(room: RoomState) {
   const g = room.game;
   if (!g) return null;
-
   return {
     inning: g.inning,
     battingId: g.battingId,
@@ -554,207 +508,14 @@ function packSnapshot(room: RoomState) {
   };
 }
 
-/** ---- Socket handlers ---- */
+/** ================= Socket handlers ================= */
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
-    // --- Create a room by code (host) ---
-  socket.on("room:create", (p: { code: string; name?: string }) => {
-    const code = (p.code || "").toUpperCase();
-    if (!codeIsValid(code)) {
-      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
-      return;
-    }
-    if (codeRoomExists(code)) {
-      safeEmit(socket.id, "room:exists", { code });
-      return;
-    }
-
-    const roomId = `code-${crypto.randomUUID()}`;
-    const name = (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0,4)}`).toString();
-
-    const state: RoomState = {
-      id: roomId,
-      code,
-      players: [socket.id],
-      names: { [socket.id]: name },
-      callerId: undefined,
-      tossCall: undefined,
-      tossOutcome: undefined,
-      tossWinnerId: undefined,
-      callTimer: null,
-      choiceTimer: null,
-      tokens: { [socket.id]: crypto.randomUUID() },
-      disconnectTimers: { [socket.id]: null },
-      game: null,
-      round: null,
-      waitingTimer: null,
-    };
-
-    rooms.set(roomId, state);
-    codeToRoomId.set(code, roomId);
-    socketToRoom.set(socket.id, roomId);
-    io.sockets.sockets.get(socket.id)?.join(roomId);
-
-    nameMap.set(socket.id, name);
-
-    // issue resume token
-    safeEmit(socket.id, "session:token", { roomId, token: state.tokens[socket.id] });
-
-    // start a 60s waiting timer
-    const expiresAt = Date.now() + ROOM_WAIT_MS;
-    state.waitingTimer = startTimer(ROOM_WAIT_MS, () => {
-      const r = rooms.get(roomId);
-      if (!r) return;
-      if (r.players.length < 2 && !r.game) {
-        safeEmit(socket.id, "room:timeout", { code, roomId });
-        cleanupRoom(roomId);
-      }
-    });
-
-    // notify host they're waiting
-    safeEmit(socket.id, "room:waiting", { code, roomId, expiresAt });
-  });
-
-  // --- Join a room by code (guest) ---
-  socket.on("room:joinByCode", (p: { code: string; name?: string }) => {
-    const code = (p.code || "").toUpperCase();
-    if (!codeIsValid(code)) {
-      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
-      return;
-    }
-    const roomId = codeToRoomId.get(code);
-    if (!roomId) {
-      safeEmit(socket.id, "room:notFound", { code });
-      return;
-    }
-    const room = rooms.get(roomId);
-    if (!room) {
-      safeEmit(socket.id, "room:notFound", { code });
-      codeToRoomId.delete(code);
-      return;
-    }
-
-    if (room.players.includes(socket.id)) {
-      // already in
-      safeEmit(socket.id, "room:alreadyIn", { code, roomId });
-      return;
-    }
-    if (room.players.length >= 2) {
-      safeEmit(socket.id, "room:full", { code });
-      return;
-    }
-
-    const name = (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0,4)}`).toString();
-    room.players.push(socket.id);
-    room.names[socket.id] = name;
-    room.tokens[socket.id] = crypto.randomUUID();
-    room.disconnectTimers[socket.id] = null;
-
-    nameMap.set(socket.id, name);
-    socketToRoom.set(socket.id, roomId);
-    io.sockets.sockets.get(socket.id)?.join(roomId);
-
-    // send private token
-    safeEmit(socket.id, "session:token", { roomId, token: room.tokens[socket.id] });
-
-    // cancel waiting timer (we have both players now)
-    if (room.waitingTimer) clearTimer(room.waitingTimer);
-    room.waitingTimer = null;
-
-    // choose toss caller randomly
-    room.callerId = pickRandom(room.players);
-
-    // announce match found (same shape as queue pairing)
-    io.to(room.id).emit("match:found", {
-      roomId: room.id,
-      players: room.players.map((id) => ({ id, name: room.names[id] })) as PlayerInfo[],
-      callerId: room.callerId,
-      code: room.code, // optional, handy for UI
-    });
-
-    // kick off toss flow
-    startToss(room);
-  });
-
-  // --- Optional: leave a code room before game starts ---
-  socket.on("room:leave", (p: { roomId?: string; code?: string }) => {
-    const roomId = p.roomId || (p.code ? codeToRoomId.get(p.code.toUpperCase()) : undefined);
-    if (!roomId) return;
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    // remove this player
-    const idx = room.players.indexOf(socket.id);
-    if (idx >= 0) room.players.splice(idx, 1);
-    delete room.names[socket.id];
-    delete room.tokens[socket.id];
-    socketToRoom.delete(socket.id);
-    io.sockets.sockets.get(socket.id)?.leave(room.id);
-
-    // if game hasn't started and <2 players, clean up
-    const preGame = !room.game;
-    if (preGame) {
-      room.players.forEach((peer) => safeEmit(peer, "room:hostLeft", { roomId, code: room.code || null }));
-      cleanupRoom(roomId);
-    }
-  });
-
+  /** ---- Names / Identity ---- */
   socket.on("me:setName", (name: string) => {
     const trimmed = (name || "").toString().trim();
     nameMap.set(socket.id, trimmed || `Player-${socket.id.slice(0, 4)}`);
-  });
-
-  socket.on("queue:join", () => {
-    if (!queue.includes(socket.id)) {
-      queue.push(socket.id);
-      tryMatch();
-    }
-  });
-
-  socket.on("queue:leave", () => {
-    const i = queue.indexOf(socket.id);
-    if (i >= 0) queue.splice(i, 1);
-  });
-
-  // Toss events
-  socket.on("toss:call", (p: { roomId: string; call: TossCall }) => {
-    const room = rooms.get(p.roomId);
-    if (!room || room.callerId !== socket.id) return;
-    if (room.tossCall) return;
-    room.tossCall = p.call;
-    resolveToss(room);
-  });
-
-  socket.on("toss:choose", (p: { roomId: string; choice: BatOrBowl }) => {
-    const room = rooms.get(p.roomId);
-    if (!room || room.tossWinnerId !== socket.id) return;
-    finalizeChoice(room, p.choice);
-  });
-
-  // --- Real-time moves ---
-  socket.on("move:select", (p: { roomId: string; move: number }) => {
-    const room = rooms.get(p.roomId);
-    if (!room || !room.game || !room.round) return;
-    const g = room.game;
-    const r = room.round;
-
-    // Validate move + deadline + player role
-    if (Date.now() > r.deadlineAt) return; // too late
-    const isPlayer = room.players.includes(socket.id);
-    if (!isPlayer) return;
-    if (p.move < 1 || p.move > 6) return;
-
-    // Only first selection counts
-    if (r.moves[socket.id] != null) return;
-
-    r.moves[socket.id] = p.move;
-
-    // If both picked early, finalize now
-    const bothPicked = Object.values(r.moves).every((m) => m != null);
-    if (bothPicked) {
-      finalizeRound(room, "bothSelected");
-    }
   });
 
   socket.on("me:setUser", async (p: { userId?: string; name?: string }) => {
@@ -764,7 +525,6 @@ io.on("connection", (socket: Socket) => {
         const u = await User.findById(id).select("_id username");
         if (u) {
           userIdMap.set(socket.id, u._id.toString());
-          // Optionally keep server-side name in sync with account username
           nameMap.set(socket.id, p.name || u.username || `Player-${socket.id.slice(0, 4)}`);
         } else {
           userIdMap.set(socket.id, null);
@@ -779,12 +539,230 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
-  // --- Resume support: client presents roomId + token to rebind ---
+  /** ---- Quick match queue ---- */
+  socket.on("queue:join", () => {
+    if (!queue.includes(socket.id)) {
+      queue.push(socket.id);
+      tryMatch();
+    }
+  });
+
+  socket.on("queue:leave", () => {
+    const i = queue.indexOf(socket.id);
+    if (i >= 0) queue.splice(i, 1);
+  });
+
+  /** ---- Create a private room by code (host) ---- */
+  socket.on("room:create", (p: { code: string; name?: string }) => {
+    const code = (p.code || "").toUpperCase();
+    if (!codeIsValid(code)) {
+      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
+      return;
+    }
+    if (codeRoomExists(code)) {
+      safeEmit(socket.id, "room:exists", { code });
+      return;
+    }
+
+    const roomId = `code-${crypto.randomUUID()}`;
+    const name =
+      (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`).toString();
+
+    const state: RoomState = {
+      id: roomId,
+      code,
+      hostId: socket.id,
+      players: [socket.id],
+      names: { [socket.id]: name },
+      tokens: { [socket.id]: crypto.randomUUID() },
+      disconnectTimers: { [socket.id]: null },
+      game: null,
+      round: null,
+      waitingTimer: null,
+      expiresAt: Date.now() + ROOM_WAIT_MS,
+    };
+
+    rooms.set(roomId, state);
+    codeToRoomId.set(code, roomId);
+    socketToRoom.set(socket.id, roomId);
+    io.sockets.sockets.get(socket.id)?.join(roomId);
+    nameMap.set(socket.id, name);
+
+    // session token for host
+    safeEmit(socket.id, "session:token", { roomId, token: state.tokens[socket.id] });
+
+    // waiting window
+    state.waitingTimer = setTimeout(() => {
+      const r = rooms.get(roomId);
+      if (!r) return;
+      if (r.players.length < 2 && !r.game) {
+        safeEmit(socket.id, "room:timeout", { code, roomId });
+        cleanupRoom(roomId);
+      }
+    }, ROOM_WAIT_MS);
+
+    // notify host about waiting status (with expiry)
+    safeEmit(socket.id, "room:waiting", { code, roomId, expiresAt: state.expiresAt });
+  });
+
+  /** ---- Join a private room by code (guest) ---- */
+  socket.on("room:joinByCode", (p: { code: string; name?: string }) => {
+    const code = (p.code || "").toUpperCase();
+    if (!codeIsValid(code)) {
+      safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
+      return;
+    }
+    const roomId = codeToRoomId.get(code);
+    if (!roomId) {
+      safeEmit(socket.id, "room:notFound", { code });
+      return;
+    }
+    const room = rooms.get(roomId);
+    if (!room) {
+      codeToRoomId.delete(code);
+      safeEmit(socket.id, "room:notFound", { code });
+      return;
+    }
+
+    // expired while waiting?
+    if (room.expiresAt && Date.now() > room.expiresAt && !room.game && room.players.length < 2) {
+      safeEmit(socket.id, "room:timeout", { code, roomId });
+      const host = room.hostId;
+      safeEmit(host, "room:timeout", { code, roomId });
+      cleanupRoom(roomId);
+      return;
+    }
+
+    if (room.players.includes(socket.id)) {
+      safeEmit(socket.id, "room:alreadyIn", { code, roomId });
+      return;
+    }
+    if (room.players.length >= 2) {
+      safeEmit(socket.id, "room:full", { code });
+      return;
+    }
+
+    const name =
+      (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`).toString();
+
+    room.players.push(socket.id);
+    room.names[socket.id] = name;
+    room.tokens[socket.id] = crypto.randomUUID();
+    room.disconnectTimers[socket.id] = null;
+
+    nameMap.set(socket.id, name);
+    socketToRoom.set(socket.id, roomId);
+    io.sockets.sockets.get(socket.id)?.join(roomId);
+
+    // resume token for guest
+    safeEmit(socket.id, "session:token", { roomId, token: room.tokens[socket.id] });
+
+    // clear waiting timer now that room is filled
+    if (room.waitingTimer) clearTimer(room.waitingTimer);
+    room.waitingTimer = null;
+
+    // Tell both players the lobby is READY; do NOT auto-start toss
+    io.to(room.id).emit("room:ready", {
+      roomId: room.id,
+      code: room.code,
+      players: room.players.map((id) => ({ id, name: room.names[id] })) as PlayerInfo[],
+      hostId: room.hostId,
+      expiresAt: room.expiresAt, // can still show in UI
+    });
+  });
+
+  /** ---- Start game (host or allow either—here host only) ---- */
+  socket.on("room:startGame", (p: { roomId: string }) => {
+    const room = rooms.get(p.roomId);
+    if (!room) return;
+
+    const isMember = room.players.includes(socket.id);
+    if (!isMember) return;
+
+    // restrict to host
+    if (socket.id !== room.hostId) {
+      safeEmit(socket.id, "room:error", { reason: "not_host" });
+      return;
+    }
+
+    // must have 2 players and not already started
+    if (room.players.length !== 2 || room.game || room.tossOutcome || room.tossCall) {
+      return;
+    }
+
+    // choose caller and start toss
+    room.callerId = pickRandom(room.players);
+
+    io.to(room.id).emit("match:found", {
+      roomId: room.id,
+      players: room.players.map((id) => ({ id, name: room.names[id] })) as PlayerInfo[],
+      callerId: room.callerId,
+      code: room.code,
+    });
+
+    startToss(room);
+  });
+
+  /** ---- Leave a private room before game starts ---- */
+  socket.on("room:leave", (p: { roomId?: string; code?: string }) => {
+    const roomId = p.roomId || (p.code ? codeToRoomId.get((p.code || "").toUpperCase()) : undefined);
+    if (!roomId) return;
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const idx = room.players.indexOf(socket.id);
+    if (idx >= 0) room.players.splice(idx, 1);
+    delete room.names[socket.id];
+    delete room.tokens[socket.id];
+    socketToRoom.delete(socket.id);
+    io.sockets.sockets.get(socket.id)?.leave(room.id);
+
+    // If pre-game and <2 players, notify and cleanup
+    if (!room.game) {
+      room.players.forEach((peer) => safeEmit(peer, "room:hostLeft", { roomId, code: room.code || null }));
+      cleanupRoom(roomId);
+    }
+  });
+
+  /** ---- Toss events ---- */
+  socket.on("toss:call", (p: { roomId: string; call: TossCall }) => {
+    const room = rooms.get(p.roomId);
+    if (!room || room.callerId !== socket.id) return;
+    if (room.tossCall) return;
+    room.tossCall = p.call;
+    resolveToss(room);
+  });
+
+  socket.on("toss:choose", (p: { roomId: string; choice: BatOrBowl }) => {
+    const room = rooms.get(p.roomId);
+    if (!room || room.tossWinnerId !== socket.id) return;
+    finalizeChoice(room, p.choice);
+  });
+
+  /** ---- Real-time moves ---- */
+  socket.on("move:select", (p: { roomId: string; move: number }) => {
+    const room = rooms.get(p.roomId);
+    if (!room || !room.game || !room.round) return;
+
+    const r = room.round;
+    if (Date.now() > r.deadlineAt) return;
+    const isPlayer = room.players.includes(socket.id);
+    if (!isPlayer) return;
+    if (p.move < 1 || p.move > 6) return;
+    if (r.moves[socket.id] != null) return; // first pick counts
+
+    r.moves[socket.id] = p.move;
+
+    const bothPicked = Object.values(r.moves).every((m) => m != null);
+    if (bothPicked) finalizeRound(room, "bothSelected");
+  });
+
+  /** ---- Resume support ---- */
   socket.on("resume:join", (p: { roomId: string; token: string; name?: string }) => {
     const room = rooms.get(p.roomId);
     if (!room) return;
 
-    // Find which player slot matches this token
     const match = Object.entries(room.tokens).find(([, tok]) => tok === p.token);
     if (!match) {
       safeEmit(socket.id, "resume:failed", { reason: "invalid_token_or_room" });
@@ -792,34 +770,28 @@ io.on("connection", (socket: Socket) => {
     }
     const [oldPlayerId] = match;
 
-    // If the old socket is still around, cleanly remove it from the room
     const oldSock = io.sockets.sockets.get(oldPlayerId);
     if (oldSock) {
       try {
         oldSock.leave(room.id);
         safeEmit(oldPlayerId, "session:replaced", { roomId: room.id });
-        // optional: oldSock.disconnect(true);
       } catch {}
     }
 
-    // Update name
-    const newName = (p.name || room.names[oldPlayerId] || `Player-${socket.id.slice(0, 4)}`).toString();
+    const newName =
+      (p.name || room.names[oldPlayerId] || `Player-${socket.id.slice(0, 4)}`).toString();
     nameMap.set(socket.id, newName);
     room.names[socket.id] = newName;
 
-    // Move mappings: socketToRoom
     socketToRoom.delete(oldPlayerId);
     socketToRoom.set(socket.id, room.id);
 
-    // Replace old id in players array
     const idx = room.players.indexOf(oldPlayerId);
     if (idx >= 0) room.players[idx] = socket.id;
 
-    // Keep the same resume token but rebind it to the new socket id
     room.tokens[socket.id] = room.tokens[oldPlayerId];
     delete room.tokens[oldPlayerId];
 
-    // Rebind game roles/scores if a game exists
     if (room.game) {
       const g = room.game;
       if (g.battingId === oldPlayerId) g.battingId = socket.id;
@@ -827,24 +799,18 @@ io.on("connection", (socket: Socket) => {
       g.scores[socket.id] = g.scores[oldPlayerId] ?? 0;
       delete g.scores[oldPlayerId];
     }
-
-    // Rebind current round move (if any)
     if (room.round) {
       const r = room.round;
       r.moves[socket.id] = r.moves[oldPlayerId] ?? null;
       delete r.moves[oldPlayerId];
     }
 
-    // Join the room
     io.sockets.sockets.get(socket.id)?.join(room.id);
-
-    // Cancel any walkover/disconnect timer for this slot and re-init mapping
     if (room.disconnectTimers[oldPlayerId]) clearTimer(room.disconnectTimers[oldPlayerId]);
     room.disconnectTimers[socket.id] = null;
     delete room.disconnectTimers[oldPlayerId];
 
-    // Send either a live snapshot (game on) or a pre-game toss state
-    const snapshot = packSnapshot(room); // may be null before game starts
+    const snapshot = packSnapshot(room);
     if (snapshot) {
       safeEmit(socket.id, "state:snapshot", {
         roomId: room.id,
@@ -854,44 +820,60 @@ io.on("connection", (socket: Socket) => {
           : null,
       });
     } else {
-      const phase = room.tossWinnerId
-        ? "awaitingChoice"
-        : room.tossCall
-        ? "resolvingToss"
-        : "awaitingTossCall";
+      // Pre-game phases for room screen UX
+      let phase:
+        | "waitingForOpponent"
+        | "waitingForStart"
+        | "awaitingTossCall"
+        | "resolvingToss"
+        | "awaitingChoice" = "waitingForStart";
+
+      if (room.players.length < 2) phase = "waitingForOpponent";
+      else if (!room.tossCall && !room.tossOutcome && !room.tossWinnerId) phase = "waitingForStart";
+      else if (!room.tossOutcome && !room.tossWinnerId) phase = "awaitingTossCall";
+      else if (room.tossOutcome && !room.tossWinnerId) phase = "resolvingToss";
+      else if (room.tossWinnerId && !room.game) phase = "awaitingChoice";
 
       safeEmit(socket.id, "state:pregame", {
         roomId: room.id,
-        phase, // "awaitingTossCall" | "resolvingToss" | "awaitingChoice"
+        phase,
         callerId: room.callerId ?? null,
         tossCall: room.tossCall ?? null,
         tossOutcome: room.tossOutcome ?? null,
         winnerId: room.tossWinnerId ?? null,
+        hostId: room.hostId,
+        code: room.code ?? null,
+        expiresAt: room.expiresAt ?? null,
       });
     }
 
-    // Acknowledge resume success
     safeEmit(socket.id, "resume:ok", { roomId: room.id, name: newName });
   });
 
+  /** ---- Disconnect handling ---- */
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.id}`);
 
-    // remove from queue
     const i = queue.indexOf(socket.id);
     if (i >= 0) queue.splice(i, 1);
 
     const roomId = socketToRoom.get(socket.id);
-    if (!roomId) return;
+    if (!roomId) {
+      nameMap.delete(socket.id);
+      return;
+    }
 
     const room = rooms.get(roomId);
-    if (!room) return;
+    if (!room) {
+      nameMap.delete(socket.id);
+      return;
+    }
 
-    // Start grace timer; if not resumed within DISCONNECT_GRACE_MS -> walkover
-    room.disconnectTimers[socket.id] = startTimer(DISCONNECT_GRACE_MS, () => {
+    // Grace period; if not resumed -> walkover
+    room.disconnectTimers[socket.id] = setTimeout(() => {
       const peer = peerOf(room, socket.id);
       safeEmit(peer, "opponent:left", { roomId });
-      // Declare walkover winner immediately, if game started
+
       if (room.game && !room.game.gameOver) {
         room.game.gameOver = true;
         room.game.winnerId = peer;
@@ -903,13 +885,12 @@ io.on("connection", (socket: Socket) => {
       }
       void persistMatch(room, "walkover");
       cleanupRoom(roomId);
-    });
+    }, DISCONNECT_GRACE_MS);
 
     nameMap.delete(socket.id);
   });
 });
 
-// WebSocket error handler
 io.engine.on("connection_error", (err) => {
   console.log("Connection error:", err);
 });
