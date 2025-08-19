@@ -1,49 +1,70 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { getSocket } from "@/src/lib/socket";
 import type { RoundStartPayload, Snapshot } from "@/src/types/realtime";
 
-type TossPhase = "idle" | "calling" | "waiting-call" | "showing-result" | "choosing" | "waiting-choice" | "done";
+type TossPhase =
+  | "idle"
+  | "calling"
+  | "waiting-call"
+  | "showing-result"
+  | "choosing"
+  | "waiting-choice"
+  | "done";
 
 export function useGameSocket() {
   const socketRef = useRef<Socket | null>(null);
   const myIdRef = useRef<string>("");
   const opponentIdRef = useRef<string>("");
 
-  const [myName, setMyName] = useState<string>(() => localStorage.getItem("username") || "You");
+  const [myName, setMyName] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("username") || "You";
+    }
+    return "You";
+  });
   const [opponent, setOpponent] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
 
-  // Lobby
+  /** -------- Lobby -------- */
   const [mode, setMode] = useState<"player" | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTime, setSearchTime] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Waiting (private room)
-  const [waiting, setWaiting] = useState<null | { code: string; expiresAt: number }> (null);
-  const [waitCountdown, setWaitCountdown] = useState<number>(0);
-  const waitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Quick match timers (browser returns number for setInterval/setTimeout)
+  const searchTickRef = useRef<number | null>(null);
+  const searchTimeoutRef = useRef<number | null>(null);
+  const searchStartedAtRef = useRef<number>(0);
 
-  // Game
+  /** -------- Private room waiting -------- */
+  const [waiting, setWaiting] = useState<null | { code: string; expiresAt: number }>(null);
+  const [waitCountdown, setWaitCountdown] = useState<number>(0);
+  const waitTimerRef = useRef<number | null>(null);
+
+  /** -------- Game -------- */
   const [gameStarted, setGameStarted] = useState(false);
   const [inning, setInning] = useState<"batting" | "bowling" | null>(null);
-  const [score, setScore] = useState({ user: 0, opponent: 0, firstInningScore: null as number | null });
+  const [score, setScore] = useState({
+    user: 0,
+    opponent: 0,
+    firstInningScore: null as number | null,
+  });
   const [playerMove, setPlayerMove] = useState<number | null>(null);
   const [opponentMove, setOpponentMove] = useState<number | null>(null);
   const [secondInningStarted, setSecondInningStarted] = useState(false);
   const [isGameOver, setIsGameOver] = useState(false);
   const [winner, setWinner] = useState<string | null>(null);
 
-  // Round
+  /** -------- Round -------- */
   const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
   const [roundCountdown, setRoundCountdown] = useState<number>(0);
   const [hasPickedThisRound, setHasPickedThisRound] = useState(false);
-  const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const roundTimerRef = useRef<number | null>(null);
 
-  // Toss
+  /** -------- Toss -------- */
   const [tossPhase, setTossPhase] = useState<TossPhase>("idle");
   const [tossCountdown, setTossCountdown] = useState<number>(0);
   const [iChooseCountdown, setIChooseCountdown] = useState<number>(0);
@@ -51,22 +72,30 @@ export function useGameSocket() {
   const [tossOutcome, setTossOutcome] = useState<"heads" | "tails" | null>(null);
   const [tossWinnerId, setTossWinnerId] = useState<string | null>(null);
 
-  // init socket
+  /** ================== Socket init & listeners ================== */
   useEffect(() => {
     const s = getSocket();
     socketRef.current = s;
+
     s.on("connect", () => {
       myIdRef.current = s.id || "";
-      const nm = localStorage.getItem("username") || `Player-${s.id?.slice(0, 4)}`;
+      const nm =
+        (typeof window !== "undefined" && localStorage.getItem("username")) ||
+        `Player-${s.id?.slice(0, 4)}`;
       setMyName(nm);
       s.emit("me:setName", nm);
-      s.emit("me:setUser", { userId: localStorage.getItem("userId"), name: nm });
+      s.emit("me:setUser", {
+        userId: typeof window !== "undefined" ? localStorage.getItem("userId") : null,
+        name: nm,
+      });
     });
 
     // session token for resume
     s.on("session:token", ({ roomId: rid, token }: { roomId: string; token: string }) => {
-      localStorage.setItem("mp_roomId", rid);
-      localStorage.setItem("mp_token", token);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("mp_roomId", rid);
+        localStorage.setItem("mp_token", token);
+      }
     });
 
     // match found
@@ -76,12 +105,18 @@ export function useGameSocket() {
       const opp = payload.players.find((p) => p.id !== me);
       opponentIdRef.current = opp?.id ?? "";
       setOpponent(opp?.name || "Opponent");
+
+      // STOP quick-match timers immediately
+      clearSearchTimers();
       setSearching(false);
+      setSearchTime(0);
+      setSearchError(null);
+
       setWaiting(null);
       setTossPhase("idle");
     });
 
-    // toss
+    /** ---------- Toss ---------- */
     s.on("toss:start", ({ callerId, timeoutMs }: { callerId: string; timeoutMs: number }) => {
       setTossPhase(callerId === s.id ? "calling" : "waiting-call");
       startSimpleCountdown(timeoutMs, setTossCountdown);
@@ -107,12 +142,13 @@ export function useGameSocket() {
       setGameStarted(true);
     });
 
-    // rounds
+    /** ---------- Rounds ---------- */
     s.on("move:roundStart", ({ deadlineAt, snapshot }: RoundStartPayload) => {
       const myId = myIdRef.current;
       const oppId = opponentIdRef.current;
       const scores = snapshot.scores as Record<string, number>;
       const iBat = snapshot.battingId === myId;
+
       setInning(iBat ? "batting" : "bowling");
       setScore({
         user: scores[myId] ?? 0,
@@ -123,37 +159,55 @@ export function useGameSocket() {
 
       setHasPickedThisRound(false);
       setRoundDeadline(deadlineAt);
+
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
       roundTimerRef.current = startCountdownTo(deadlineAt, setRoundCountdown);
     });
 
-    s.on("move:roundResult", ({ moves, applyAfterMs, snapshot }: { moves: Record<string, number>; applyAfterMs: number; snapshot: Snapshot; }) => {
-      const myId = myIdRef.current;
-      const oppId = opponentIdRef.current;
-      setPlayerMove(moves[myId]);
-      setOpponentMove(moves[oppId]);
-      setTimeout(() => {
-        const scores = snapshot.scores;
-        const iBat = snapshot.battingId === myId;
-        setInning(iBat ? "batting" : "bowling");
-        setScore({
-          user: scores[myId] ?? 0,
-          opponent: scores[oppId] ?? 0,
-          firstInningScore: snapshot.firstInningScore,
-        });
-        setSecondInningStarted(snapshot.secondInningStarted);
-        if (snapshot.gameOver) {
-          setIsGameOver(true);
-          const winName = snapshot.winnerId === myId ? (myName || "You") : (opponent || "Opponent");
-          setWinner(`${winName} Wins`);
-        }
-        setPlayerMove(null);
-        setOpponentMove(null);
-        setHasPickedThisRound(false);
-        setRoundDeadline(null);
-        setRoundCountdown(0);
-      }, applyAfterMs);
-    });
+    s.on(
+      "move:roundResult",
+      ({
+        moves,
+        applyAfterMs,
+        snapshot,
+      }: {
+        moves: Record<string, number>;
+        applyAfterMs: number;
+        snapshot: Snapshot;
+      }) => {
+        const myId = myIdRef.current;
+        const oppId = opponentIdRef.current;
+
+        // show chosen numbers immediately for visuals; scoring comes after applyAfterMs
+        setPlayerMove(moves[myId]);
+        setOpponentMove(moves[oppId]);
+
+        setTimeout(() => {
+          const scores = snapshot.scores;
+          const iBat = snapshot.battingId === myId;
+          setInning(iBat ? "batting" : "bowling");
+          setScore({
+            user: scores[myId] ?? 0,
+            opponent: scores[oppId] ?? 0,
+            firstInningScore: snapshot.firstInningScore,
+          });
+          setSecondInningStarted(snapshot.secondInningStarted);
+
+          if (snapshot.gameOver) {
+            setIsGameOver(true);
+            const winName = snapshot.winnerId === myId ? myName || "You" : opponent || "Opponent";
+            setWinner(`${winName} Wins`);
+          }
+
+          // reset per round
+          setPlayerMove(null);
+          setOpponentMove(null);
+          setHasPickedThisRound(false);
+          setRoundDeadline(null);
+          setRoundCountdown(0);
+        }, applyAfterMs);
+      }
+    );
 
     s.on("state:snapshot", ({ snapshot }: { snapshot: Snapshot }) => {
       const myId = s.id!;
@@ -168,10 +222,11 @@ export function useGameSocket() {
       setGameStarted(!snapshot.gameOver);
     });
 
-    // waiting room lifecycle
+    /** ---------- Waiting room lifecycle ---------- */
     s.on("room:waiting", (p: { code: string; roomId: string; expiresAt: number }) => {
       setRoomId(p.roomId);
       setWaiting({ code: p.code, expiresAt: p.expiresAt });
+
       if (waitTimerRef.current) clearInterval(waitTimerRef.current);
       const tick = () => {
         const ms = Math.max(0, p.expiresAt - Date.now());
@@ -182,7 +237,7 @@ export function useGameSocket() {
         }
       };
       tick();
-      waitTimerRef.current = setInterval(tick, 250);
+      waitTimerRef.current = window.setInterval(tick, 250);
     });
     s.on("room:timeout", () => {
       setWaiting(null);
@@ -204,7 +259,7 @@ export function useGameSocket() {
       alert(`Room ${code} is full.`);
     });
 
-    // disconnects
+    /** ---------- Disconnects ---------- */
     s.on("opponent:left", () => {
       setIsGameOver(true);
       setWinner("Opponent left. You win by walkover 🏆");
@@ -218,16 +273,17 @@ export function useGameSocket() {
       s.removeAllListeners();
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
       if (waitTimerRef.current) clearInterval(waitTimerRef.current);
+      clearSearchTimers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ======= helpers ======= */
+  /** ================== helpers ================== */
   const startSimpleCountdown = (ms: number, setter: (n: number) => void) => {
     const total = Math.ceil(ms / 1000);
     setter(total);
     let left = total;
-    const int = setInterval(() => {
+    const int = window.setInterval(() => {
       left -= 1;
       setter(left);
       if (left <= 0) clearInterval(int);
@@ -236,7 +292,7 @@ export function useGameSocket() {
 
   const startCountdownTo = (deadline: number, setter: (n: number) => void) => {
     setter(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
-    const int = setInterval(() => {
+    const int = window.setInterval(() => {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       setter(left);
       if (left <= 0) clearInterval(int);
@@ -244,30 +300,70 @@ export function useGameSocket() {
     return int;
   };
 
-  /* ======= actions (lobby) ======= */
+  /** ================== Quick Match timer control ================== */
+  const clearSearchTimers = () => {
+    if (searchTickRef.current) {
+      clearInterval(searchTickRef.current);
+      searchTickRef.current = null;
+    }
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+  };
+
+  const handleSearchTimeout = () => {
+    clearSearchTimers();
+    try {
+      socketRef.current?.emit("queue:leave");
+    } catch {}
+    setSearching(false);
+    setMode(null);
+    setSearchTime(60); // lock UI at 60s
+    setSearchError("No player is active right now. Please try again.");
+  };
+
+  /** ================== actions (lobby) ================== */
   const startQuickMatch = () => {
-    setMode("player");
-    setSearching(true);
+    clearSearchTimers();
+    setSearchError(null);
     setSearchTime(0);
+    setSearching(true);
+    setMode("player");
+
     socketRef.current?.emit("me:setName", myName);
-    socketRef.current?.emit("me:setUser", { userId: localStorage.getItem("userId"), name: myName });
+    socketRef.current?.emit("me:setUser", {
+      userId: typeof window !== "undefined" ? localStorage.getItem("userId") : null,
+      name: myName,
+    });
     socketRef.current?.emit("queue:join");
-    // timer to show seconds
-    const startedAt = Date.now();
-    const int = setInterval(() => {
-      setSearchTime(Math.floor((Date.now() - startedAt) / 1000));
+
+    searchStartedAtRef.current = Date.now();
+
+    // 1s tick
+    searchTickRef.current = window.setInterval(() => {
+      const secs = Math.floor((Date.now() - searchStartedAtRef.current) / 1000);
+      if (secs >= 60) {
+        handleSearchTimeout();
+      } else {
+        setSearchTime(secs);
+      }
     }, 1000);
-    setTimeout(() => clearInterval(int), 61_000);
+
+    // hard timeout safety
+    searchTimeoutRef.current = window.setTimeout(handleSearchTimeout, 60_000);
   };
 
   const cancelQuickMatch = () => {
+    clearSearchTimers();
     socketRef.current?.emit("queue:leave");
     setSearching(false);
     setMode(null);
     setSearchTime(0);
+    setSearchError(null);
   };
 
-  /* ======= actions (private room) ======= */
+  /** ================== actions (private room) ================== */
   const createRoom = async () => {
     const c = genCode();
     try {
@@ -292,7 +388,7 @@ export function useGameSocket() {
     setWaiting(null);
   };
 
-  /* ======= actions (toss) ======= */
+  /** ================== actions (toss) ================== */
   const callHeadsOrTails = (rid: string, call: "heads" | "tails") => {
     socketRef.current?.emit("toss:call", { roomId: rid, call });
   };
@@ -300,7 +396,7 @@ export function useGameSocket() {
     socketRef.current?.emit("toss:choose", { roomId: rid, choice });
   };
 
-  /* ======= actions (move) ======= */
+  /** ================== actions (move) ================== */
   const playMultiplayerMove = (rid: string, move: number) => {
     if (hasPickedThisRound || !roundDeadline || Date.now() > roundDeadline) return;
     socketRef.current?.emit("move:select", { roomId: rid, move });
@@ -308,7 +404,7 @@ export function useGameSocket() {
     setPlayerMove(move);
   };
 
-  /* ======= utils ======= */
+  /** ================== utils ================== */
   const genCode = (len = 6) => {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let out = "";

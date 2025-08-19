@@ -17,14 +17,12 @@ import GameOverModal from "@/components/game/overlays/GameOverModal";
 
 import GameBoard from "@/components/game/board/GameBoard";
 
-/* Optional but helpful to avoid static prerender attempts */
 export const revalidate = 0;
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) {
-    // Lightweight skeleton to avoid layout shift
     return (
       <div className="min-h-[100svh] bg-gray-950 text-white grid place-items-center">
         <div className="animate-pulse text-white/60">Loading game…</div>
@@ -35,19 +33,14 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 function GameScreenInner() {
-  // Redirect if not logged in (runs safely on client after ClientOnly)
   useAuthGuard("/login?next=/game");
 
-  /**
-   * Multiplayer (socket) state
-   */
   const {
-    // identity & room
     myName,
     opponent,
     roomId,
 
-    // lobby state
+    // Lobby
     mode,
     searching,
     searchTime,
@@ -55,14 +48,14 @@ function GameScreenInner() {
     startQuickMatch,
     cancelQuickMatch,
 
-    // private rooms
+    // Private rooms
     createRoom,
     joinRoomByCode,
     waiting,
     waitCountdown,
     cancelWaiting,
 
-    // game state (multiplayer)
+    // Game (MP)
     gameStarted,
     inning,
     score,
@@ -75,7 +68,7 @@ function GameScreenInner() {
     winner,
     secondInningStarted,
 
-    // toss
+    // Toss
     tossPhase,
     tossCountdown,
     tossCall,
@@ -85,13 +78,11 @@ function GameScreenInner() {
     callHeadsOrTails,
     chooseBatOrBowl,
 
-    // actions
+    // Actions
     playMultiplayerMove,
   } = useGameSocket();
 
-  /**
-   * Bot (solo) state — owns the entire bot gameplay
-   */
+  /* ------------- Bot (solo) state ------------- */
   const {
     isBotMode,
     startBotGame,
@@ -109,7 +100,7 @@ function GameScreenInner() {
     playBotMove,
   } = useBotGame(myName);
 
-  // Merge state based on active mode
+  /* ---------- Merge active state by mode ---------- */
   const activeInning = isBotMode ? botInning : inning;
   const activeScore = isBotMode ? botScore : score;
   const activePlayerMove = isBotMode ? botPlayerMove : playerMove;
@@ -122,20 +113,25 @@ function GameScreenInner() {
 
   return (
     <div className="min-h-[100svh] bg-gray-950 text-white relative">
-      {/* Background */}
-      <div className="pointer-events-none absolute -top-28 left-1/2 -translate-x-1/2 h-[42rem] w-[42rem] rounded-full bg-[radial-gradient(closest-side,_rgba(34,197,94,.22),_transparent)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,.06)_1px,transparent_1px)] bg-[size:42px_42px]" />
+      {/* Background (lighter/Smaller on mobile) */}
+      <div className="pointer-events-none absolute -top-16 left-1/2 -translate-x-1/2 h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(closest-side,_rgba(34,197,94,.18),_transparent)] sm:h-[36rem] sm:w-[36rem] md:h-[42rem] md:w-[42rem]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,.05)_1px,transparent_1px)] bg-[size:36px_36px] sm:bg-[size:42px_42px]" />
 
-      <div className="mx-auto max-w-7xl px-6 pt-16 pb-16">
+      {/* Page padding (mobile-first) */}
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 pt-12 sm:pt-16 pb-20" style={{ paddingBottom: "max(5rem, calc(5rem + env(safe-area-inset-bottom)))" }}>
         {/* Header */}
         <div className="flex flex-col items-center text-center">
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">Play ThumbBat</h1>
-          <p className="mt-2 text-white/70">Quick match, private room, or solo vs bot.</p>
+          <h1 className="text-2xl xs:text-3xl sm:text-4xl font-extrabold tracking-tight">
+            Play ThumbBat
+          </h1>
+          <p className="mt-2 text-sm sm:text-base text-white/70">
+            Quick match, private room, or solo vs bot.
+          </p>
         </div>
 
-        {/* Lobby */}
+        {/* Lobby (stack on mobile) */}
         {!waiting && !gameStarted && !isBotMode && (
-          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="mt-6 sm:mt-8 grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <QuickMatchCard
               searching={searching}
               searchTime={searchTime}
@@ -156,7 +152,7 @@ function GameScreenInner() {
           </div>
         )}
 
-        {/* Waiting overlay for private room */}
+        {/* Waiting overlay (private room) */}
         <AnimatePresence>
           {waiting && (
             <WaitingOverlay
@@ -167,7 +163,7 @@ function GameScreenInner() {
           )}
         </AnimatePresence>
 
-        {/* Toss overlays (multiplayer only, pre-game) */}
+        {/* Toss overlays (MP only, pre-game) */}
         {!isBotMode &&
           !gameStarted &&
           tossPhase !== "idle" &&
@@ -185,34 +181,35 @@ function GameScreenInner() {
             />
           )}
 
-        {/* Game board */}
+        {/* Game board (constrain width on mobile for comfortable reach) */}
         {gameStarted || isBotMode ? (
-          <div className="mt-10">
-            <GameBoard
-              myName={myName}
-              opponentName={activeOpponentName}
-              inning={activeInning}
-              score={activeScore}
-              playerMove={activePlayerMove}
-              opponentMove={activeOpponentMove}
-              roundCountdown={activeRoundCountdown}
-              isMultiplayer={!isBotMode}
-              canPick={canPick}
-              onPick={(move) => {
-                if (isBotMode) {
-                  playBotMove(move);
-                } else if (roomId) {
-                  playMultiplayerMove(roomId, move);
-                }
-              }
-            }
-            secondInningStarted={secondInningStarted}
-            />
+          <div className="mt-6 sm:mt-10">
+            <div className="mx-auto w-full max-w-[720px]">
+              <GameBoard
+                myName={myName}
+                opponentName={activeOpponentName}
+                inning={activeInning}
+                score={activeScore}
+                playerMove={activePlayerMove}
+                opponentMove={activeOpponentMove}
+                roundCountdown={activeRoundCountdown}
+                isMultiplayer={!isBotMode}
+                canPick={canPick}
+                onPick={(move) => {
+                  if (isBotMode) {
+                    playBotMove(move);
+                  } else if (roomId) {
+                    playMultiplayerMove(roomId, move);
+                  }
+                }}
+                secondInningStarted={secondInningStarted || isBotMode ? botSecondInnings : secondInningStarted}
+              />
+            </div>
           </div>
         ) : null}
       </div>
 
-      {/* Innings overlay (bot mode controlled) */}
+      {/* Innings overlay */}
       <InningsOverlay
         open={!!showInningsOverlay}
         firstInningsScore={activeScore.firstInningScore}
@@ -224,13 +221,13 @@ function GameScreenInner() {
       <AnimatePresence>
         {isBotMode && showGameStartPopup && (
           <motion.div
-            className="fixed inset-0 bg-gray-950/80 grid place-items-center z-40"
+            className="fixed inset-0 bg-gray-950/80 grid place-items-center z-40 px-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className="bg-gray-800 p-6 rounded-lg shadow-lg text-center max-w-sm">
-              <h3 className="text-2xl font-bold text-yellow-400">
+            <div className="w-full max-w-sm bg-gray-800 p-5 sm:p-6 rounded-2xl shadow-lg text-center">
+              <h3 className="text-xl sm:text-2xl font-bold text-yellow-400">
                 🏏 Cricket Gods chose you for{" "}
                 <span className="text-green-400">{activeInning}</span>
               </h3>
@@ -239,7 +236,7 @@ function GameScreenInner() {
         )}
       </AnimatePresence>
 
-      {/* Game over modal (both modes) */}
+      {/* Game over modal */}
       <GameOverModal
         open={!!activeGameOver}
         winner={activeWinner || ""}
@@ -247,7 +244,7 @@ function GameScreenInner() {
         opponentScore={activeScore.opponent}
         onExit={() => (window.location.href = "/")}
         onRestart={() => {
-          // Rematch in bot mode for quick restart
+          // Quick rematch in bot mode for mobile users
           startBotGame();
         }}
       />
@@ -255,10 +252,11 @@ function GameScreenInner() {
   );
 }
 
+/* ---------------- Exported Screen ---------------- */
 export default function GameScreen() {
   return (
     <ClientOnly>
-      {/* Wrap anything that uses useSearchParams() somewhere inside */}
+      {/* Wrap anything that uses useSearchParams() */}
       <Suspense
         fallback={
           <div className="min-h-[100svh] bg-gray-950 text-white grid place-items-center">
