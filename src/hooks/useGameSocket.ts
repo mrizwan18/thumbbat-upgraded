@@ -514,6 +514,16 @@ export function useGameSocket() {
     return out;
   };
 
+  const createRoomWithCode = (code: string) => {
+    const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (c.length < 4 || c.length > 8) {
+      alert("Enter a 4–8 character code");
+      return;
+    }
+    setMode("player");
+    socketRef.current?.emit("room:create", { code: c, name: myName });
+  };
+
   const isHost = (roomHostId && (socketRef.current?.id || "")) ? roomHostId === socketRef.current?.id : false;
   const roomReady = roomPlayers.length === 2 && !gameStarted && tossPhase === "idle";
 
@@ -572,5 +582,6 @@ export function useGameSocket() {
     // snackbar
     joinSnackbar,
     setJoinSnackbar,
+    createRoomWithCode,
   };
 }
