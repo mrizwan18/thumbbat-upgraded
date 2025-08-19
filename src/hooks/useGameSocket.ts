@@ -34,15 +34,20 @@ export function useGameSocket() {
   const [searchTime, setSearchTime] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Quick match timers (browser returns number for setInterval/setTimeout)
+  // Quick match timers
   const searchTickRef = useRef<number | null>(null);
   const searchTimeoutRef = useRef<number | null>(null);
   const searchStartedAtRef = useRef<number>(0);
 
   /** -------- Private room waiting -------- */
   const [waiting, setWaiting] = useState<null | { code: string; expiresAt: number }>(null);
+  const [roomCode, setRoomCode] = useState<string | null>(null);
   const [waitCountdown, setWaitCountdown] = useState<number>(0);
   const waitTimerRef = useRef<number | null>(null);
+
+  /** -------- Room roster / host -------- */
+  const [roster, setRoster] = useState<{ id: string; name: string }[]>([]);
+  const [isHost, setIsHost] = useState<boolean>(false);
 
   /** -------- Game -------- */
   const [gameStarted, setGameStarted] = useState(false);
@@ -98,25 +103,51 @@ export function useGameSocket() {
       }
     });
 
-    // match found
-    s.on("match:found", (payload: { roomId: string; players: { id: string; name: string }[]; callerId: string }) => {
-      setRoomId(payload.roomId);
-      const me = s.id;
-      const opp = payload.players.find((p) => p.id !== me);
-      opponentIdRef.current = opp?.id ?? "";
-      setOpponent(opp?.name || "Opponent");
+    // ---------- Room lifecycle / roster ----------
+    s.on("room:waiting", (p: { code: string; roomId: string; expiresAt: number; hostId?: string; players?: {id:string;name:string}[] }) => {
+      setRoomId(p.roomId);
+      setRoomCode(p.code);
+      setWaitingWithExpiry(p.code, p.expiresAt);
+      if (p.players) setRoster(p.players);
+      if (p.hostId) setIsHost(p.hostId === s.id);
+    });
 
-      // STOP quick-match timers immediately
+    s.on("room:roster", ({ hostId, players }: { hostId: string; players: { id: string; name: string }[] }) => {
+      setIsHost(hostId === s.id);
+      setRoster(players);
+    });
+
+    s.on("room:playerJoined", ({ players, hostId }: { players: {id:string;name:string}[]; hostId: string }) => {
+      setRoster(players);
+      setIsHost(hostId === s.id);
+    });
+
+    s.on("room:playerLeft", ({ players, hostId }: { players: {id:string;name:string}[]; hostId: string }) => {
+      setRoster(players);
+      setIsHost(hostId === s.id);
+    });
+
+    s.on("room:full", ({ code }: { code: string }) => {
+      setSearchError(`Room ${code} is full.`);
+    });
+
+    // When match actually starts (after host presses Start)
+    s.on("match:found", (payload: { roomId: string; players: { id: string; name: string }[]; callerId: string; code?: string; expiresAt?: number; hostId?: string }) => {
+      setRoomId(payload.roomId);
+      setRoster(payload.players);
+      if (payload.hostId) setIsHost(payload.hostId === s.id);
+      if (payload.code && payload.expiresAt) {
+        setRoomCode(payload.code);
+        setWaitingWithExpiry(payload.code, payload.expiresAt);
+      }
       clearSearchTimers();
       setSearching(false);
       setSearchTime(0);
       setSearchError(null);
-
-      setWaiting(null);
       setTossPhase("idle");
     });
 
-    /** ---------- Toss ---------- */
+    // ---------- Toss ----------
     s.on("toss:start", ({ callerId, timeoutMs }: { callerId: string; timeoutMs: number }) => {
       setTossPhase(callerId === s.id ? "calling" : "waiting-call");
       startSimpleCountdown(timeoutMs, setTossCountdown);
@@ -142,7 +173,7 @@ export function useGameSocket() {
       setGameStarted(true);
     });
 
-    /** ---------- Rounds ---------- */
+    // ---------- Rounds ----------
     s.on("move:roundStart", ({ deadlineAt, snapshot }: RoundStartPayload) => {
       const myId = myIdRef.current;
       const oppId = opponentIdRef.current;
@@ -178,7 +209,7 @@ export function useGameSocket() {
         const myId = myIdRef.current;
         const oppId = opponentIdRef.current;
 
-        // show chosen numbers immediately for visuals; scoring comes after applyAfterMs
+        // Show chosen numbers immediately for visuals; scoring after applyAfterMs
         setPlayerMove(moves[myId]);
         setOpponentMove(moves[oppId]);
 
@@ -222,23 +253,7 @@ export function useGameSocket() {
       setGameStarted(!snapshot.gameOver);
     });
 
-    /** ---------- Waiting room lifecycle ---------- */
-    s.on("room:waiting", (p: { code: string; roomId: string; expiresAt: number }) => {
-      setRoomId(p.roomId);
-      setWaiting({ code: p.code, expiresAt: p.expiresAt });
-
-      if (waitTimerRef.current) clearInterval(waitTimerRef.current);
-      const tick = () => {
-        const ms = Math.max(0, p.expiresAt - Date.now());
-        setWaitCountdown(Math.ceil(ms / 1000));
-        if (ms <= 0 && waitTimerRef.current) {
-          clearInterval(waitTimerRef.current);
-          waitTimerRef.current = null;
-        }
-      };
-      tick();
-      waitTimerRef.current = window.setInterval(tick, 250);
-    });
+    // ---------- Waiting room lifecycle ----------
     s.on("room:timeout", () => {
       setWaiting(null);
       if (waitTimerRef.current) {
@@ -246,6 +261,7 @@ export function useGameSocket() {
         waitTimerRef.current = null;
       }
     });
+
     s.on("room:exists", ({ code }: any) => {
       setWaiting(null);
       alert(`Room ${code} already exists. Try joining instead.`);
@@ -259,7 +275,7 @@ export function useGameSocket() {
       alert(`Room ${code} is full.`);
     });
 
-    /** ---------- Disconnects ---------- */
+    // ---------- Disconnects ----------
     s.on("opponent:left", () => {
       setIsGameOver(true);
       setWinner("Opponent left. You win by walkover 🏆");
@@ -279,6 +295,22 @@ export function useGameSocket() {
   }, []);
 
   /** ================== helpers ================== */
+  const setWaitingWithExpiry = (code: string, expiresAt: number) => {
+    setWaiting({ code, expiresAt });
+    setRoomCode(code);
+    if (waitTimerRef.current) clearInterval(waitTimerRef.current);
+    const tick = () => {
+      const ms = Math.max(0, expiresAt - Date.now());
+      setWaitCountdown(Math.ceil(ms / 1000));
+      if (ms <= 0 && waitTimerRef.current) {
+        clearInterval(waitTimerRef.current);
+        waitTimerRef.current = null;
+      }
+    };
+    tick();
+    waitTimerRef.current = window.setInterval(tick, 250);
+  };
+
   const startSimpleCountdown = (ms: number, setter: (n: number) => void) => {
     const total = Math.ceil(ms / 1000);
     setter(total);
@@ -319,7 +351,7 @@ export function useGameSocket() {
     } catch {}
     setSearching(false);
     setMode(null);
-    setSearchTime(60); // lock UI at 60s
+    setSearchTime(60);
     setSearchError("No player is active right now. Please try again.");
   };
 
@@ -340,7 +372,6 @@ export function useGameSocket() {
 
     searchStartedAtRef.current = Date.now();
 
-    // 1s tick
     searchTickRef.current = window.setInterval(() => {
       const secs = Math.floor((Date.now() - searchStartedAtRef.current) / 1000);
       if (secs >= 60) {
@@ -350,7 +381,6 @@ export function useGameSocket() {
       }
     }, 1000);
 
-    // hard timeout safety
     searchTimeoutRef.current = window.setTimeout(handleSearchTimeout, 60_000);
   };
 
@@ -364,23 +394,27 @@ export function useGameSocket() {
   };
 
   /** ================== actions (private room) ================== */
-  const createRoom = async () => {
-    const c = genCode();
-    try {
-      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(c);
-    } catch {}
+  const hostRoom = async (codeArg?: string): Promise<string> => {
+    const code = (codeArg ?? genCode()).toUpperCase();
     setMode("player");
-    socketRef.current?.emit("room:create", { code: c, name: myName });
+    setIsHost(true);
+    setWaitingWithExpiry(code, Date.now() + 60_000); // optimistic until server confirms
+    try { await navigator?.clipboard?.writeText(code); } catch {}
+    socketRef.current?.emit("room:create", { code, name: myName });
+    return code;
   };
 
-  const joinRoomByCode = (code: string) => {
-    const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (c.length < 4 || c.length > 8) {
+  const joinRoom = (codeRaw: string) => {
+    const code = codeRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length < 4 || code.length > 8) {
       alert("Enter a 4–8 character code");
       return;
     }
     setMode("player");
-    socketRef.current?.emit("room:joinByCode", { code: c, name: myName });
+    setIsHost(false);
+    // optimistic 45s until server sends real expiresAt
+    setWaitingWithExpiry(code, Date.now() + 45_000);
+    socketRef.current?.emit("room:joinByCode", { code, name: myName });
   };
 
   const cancelWaiting = (code: string) => {
@@ -396,7 +430,11 @@ export function useGameSocket() {
     socketRef.current?.emit("toss:choose", { roomId: rid, choice });
   };
 
-  /** ================== actions (move) ================== */
+  /** ================== actions (start match / moves) ================== */
+  const startMatch = (rid: string) => {
+    socketRef.current?.emit("room:start", { roomId: rid });
+  };
+
   const playMultiplayerMove = (rid: string, move: number) => {
     if (hasPickedThisRound || !roundDeadline || Date.now() > roundDeadline) return;
     socketRef.current?.emit("move:select", { roomId: rid, move });
@@ -425,11 +463,14 @@ export function useGameSocket() {
     startQuickMatch,
     cancelQuickMatch,
     // private rooms
-    createRoom,
-    joinRoomByCode,
     waiting,
     waitCountdown,
     cancelWaiting,
+    roomCode,
+    roster,
+    isHost,
+    hostRoom,
+    joinRoom,
     // game state
     gameStarted,
     inning,
@@ -452,6 +493,7 @@ export function useGameSocket() {
     callHeadsOrTails,
     chooseBatOrBowl,
     // actions
+    startMatch,
     playMultiplayerMove,
   };
 }
