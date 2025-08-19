@@ -14,6 +14,8 @@ type TossPhase =
   | "waiting-choice"
   | "done";
 
+type PlayerInfo = { id: string; name: string };
+
 export function useGameSocket() {
   const socketRef = useRef<Socket | null>(null);
   const myIdRef = useRef<string>("");
@@ -39,15 +41,15 @@ export function useGameSocket() {
   const searchTimeoutRef = useRef<number | null>(null);
   const searchStartedAtRef = useRef<number>(0);
 
-  /** -------- Private room waiting -------- */
-  const [waiting, setWaiting] = useState<null | { code: string; expiresAt: number }>(null);
+  /** -------- Private room meta (pre-game) -------- */
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  const [waitCountdown, setWaitCountdown] = useState<number>(0);
-  const waitTimerRef = useRef<number | null>(null);
-
-  /** -------- Room roster / host -------- */
-  const [roster, setRoster] = useState<{ id: string; name: string }[]>([]);
-  const [isHost, setIsHost] = useState<boolean>(false);
+  const [roomPlayers, setRoomPlayers] = useState<PlayerInfo[]>([]);
+  const [roomHostId, setRoomHostId] = useState<string | null>(null);
+  const [roomExpiresAt, setRoomExpiresAt] = useState<number | null>(null);
+  const [roomExpireSeconds, setRoomExpireSeconds] = useState<number | null>(null);
+  const roomExpireTimerRef = useRef<number | null>(null);
+  const prevPlayerIdsRef = useRef<string[]>([]);
+  const [joinSnackbar, setJoinSnackbar] = useState<string | null>(null);
 
   /** -------- Game -------- */
   const [gameStarted, setGameStarted] = useState(false);
@@ -77,6 +79,27 @@ export function useGameSocket() {
   const [tossOutcome, setTossOutcome] = useState<"heads" | "tails" | null>(null);
   const [tossWinnerId, setTossWinnerId] = useState<string | null>(null);
 
+  const clearRoomExpiryTimer = () => {
+    if (roomExpireTimerRef.current) {
+      clearInterval(roomExpireTimerRef.current);
+      roomExpireTimerRef.current = null;
+    }
+  };
+
+  const startRoomExpiryCountdown = (expiresAt: number) => {
+    setRoomExpiresAt(expiresAt);
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      setRoomExpireSeconds(left);
+      if (left <= 0 && roomExpireTimerRef.current) {
+        clearRoomExpiryTimer();
+      }
+    };
+    tick();
+    clearRoomExpiryTimer();
+    roomExpireTimerRef.current = window.setInterval(tick, 1000);
+  };
+
   /** ================== Socket init & listeners ================== */
   useEffect(() => {
     const s = getSocket();
@@ -103,51 +126,117 @@ export function useGameSocket() {
       }
     });
 
-    // ---------- Room lifecycle / roster ----------
-    s.on("room:waiting", (p: { code: string; roomId: string; expiresAt: number; hostId?: string; players?: {id:string;name:string}[] }) => {
-      setRoomId(p.roomId);
-      setRoomCode(p.code);
-      setWaitingWithExpiry(p.code, p.expiresAt);
-      if (p.players) setRoster(p.players);
-      if (p.hostId) setIsHost(p.hostId === s.id);
-    });
+    /** ---------- Quick-match: match found (auto toss) ---------- */
+    s.on(
+      "match:found",
+      (payload: { roomId: string; players: PlayerInfo[]; callerId: string; code?: string }) => {
+        setRoomId(payload.roomId);
 
-    s.on("room:roster", ({ hostId, players }: { hostId: string; players: { id: string; name: string }[] }) => {
-      setIsHost(hostId === s.id);
-      setRoster(players);
-    });
+        // Track players (also used for snackbar if this came from code room)
+        setRoomPlayers(payload.players);
+        prevPlayerIdsRef.current = payload.players.map((p) => p.id);
 
-    s.on("room:playerJoined", ({ players, hostId }: { players: {id:string;name:string}[]; hostId: string }) => {
-      setRoster(players);
-      setIsHost(hostId === s.id);
-    });
+        const me = s.id;
+        const opp = payload.players.find((p) => p.id !== me);
+        opponentIdRef.current = opp?.id ?? "";
+        setOpponent(opp?.name || "Opponent");
 
-    s.on("room:playerLeft", ({ players, hostId }: { players: {id:string;name:string}[]; hostId: string }) => {
-      setRoster(players);
-      setIsHost(hostId === s.id);
-    });
+        // STOP quick-match timers
+        clearSearchTimers();
+        setSearching(false);
+        setSearchTime(0);
+        setSearchError(null);
 
-    s.on("room:full", ({ code }: { code: string }) => {
-      setSearchError(`Room ${code} is full.`);
-    });
+        // Clear pre-game room UI, if any
+        setRoomCode(payload.code || null);
+        setRoomHostId((prev) => prev ?? null);
+        setRoomExpiresAt(null);
+        setRoomExpireSeconds(null);
+        clearRoomExpiryTimer();
 
-    // When match actually starts (after host presses Start)
-    s.on("match:found", (payload: { roomId: string; players: { id: string; name: string }[]; callerId: string; code?: string; expiresAt?: number; hostId?: string }) => {
-      setRoomId(payload.roomId);
-      setRoster(payload.players);
-      if (payload.hostId) setIsHost(payload.hostId === s.id);
-      if (payload.code && payload.expiresAt) {
-        setRoomCode(payload.code);
-        setWaitingWithExpiry(payload.code, payload.expiresAt);
+        setTossPhase("idle");
       }
-      clearSearchTimers();
-      setSearching(false);
-      setSearchTime(0);
-      setSearchError(null);
-      setTossPhase("idle");
+    );
+
+    /** ---------- Private room: waiting (host) ---------- */
+    s.on("room:waiting", (p: { code: string; roomId: string; expiresAt: number }) => {
+      setRoomId(p.roomId);
+      setMode("player");
+      setRoomCode(p.code);
+      setRoomHostId(s.id || null);
+      setRoomPlayers([{ id: s.id || "", name: myName }]);
+      prevPlayerIdsRef.current = [s.id || ""];
+      startRoomExpiryCountdown(p.expiresAt);
     });
 
-    // ---------- Toss ----------
+    /** ---------- Private room: ready (both see this) ---------- */
+    s.on(
+      "room:ready",
+      (p: {
+        roomId: string;
+        code?: string;
+        players: PlayerInfo[];
+        hostId: string;
+        expiresAt?: number | null;
+      }) => {
+        setRoomId(p.roomId);
+        setMode("player");
+        setRoomCode(p.code || null);
+        setRoomPlayers(p.players);
+        setRoomHostId(p.hostId);
+
+        // detect who just joined (for snackbar)
+        const prevSet = new Set(prevPlayerIdsRef.current);
+        const currIds = p.players.map((x) => x.id);
+        const newId = currIds.find((id) => !prevSet.has(id));
+        prevPlayerIdsRef.current = currIds;
+        if (newId && newId !== (socketRef.current?.id || "")) {
+          const name = p.players.find((pl) => pl.id === newId)?.name || "Player";
+          setJoinSnackbar(`${name} joined the room`);
+          // auto-hide after 3s
+          setTimeout(() => setJoinSnackbar(null), 3000);
+        }
+
+        if (typeof p.expiresAt === "number") {
+          startRoomExpiryCountdown(p.expiresAt);
+        } else {
+          // once both are in, room expiry usually stops mattering; clear if present
+          setRoomExpiresAt(null);
+          setRoomExpireSeconds(null);
+          clearRoomExpiryTimer();
+        }
+      }
+    );
+
+    /** ---------- Private room: timeout / errors ---------- */
+    s.on("room:timeout", () => {
+      // Room expired before second player joined
+      setJoinSnackbar("Room expired. Please create a new one.");
+      setTimeout(() => setJoinSnackbar(null), 3000);
+      resetRoomMeta();
+    });
+    s.on("room:exists", ({ code }: any) => {
+      setJoinSnackbar(`Room ${code} already exists. Try joining instead.`);
+      setTimeout(() => setJoinSnackbar(null), 3000);
+      resetRoomMeta();
+    });
+    s.on("room:notFound", ({ code }: any) => {
+      setJoinSnackbar(`Room ${code} not found.`);
+      setTimeout(() => setJoinSnackbar(null), 3000);
+      resetRoomMeta();
+    });
+    s.on("room:full", ({ code }: any) => {
+      setJoinSnackbar(`Room ${code} is full.`);
+      setTimeout(() => setJoinSnackbar(null), 3000);
+      // keep lobby visible; user can try another code
+    });
+    s.on("room:hostLeft", () => {
+      setJoinSnackbar("Host left the room.");
+      setTimeout(() => setJoinSnackbar(null), 3000);
+      resetRoomMeta();
+    });
+
+    /** ---------- Toss ---------- */
     s.on("toss:start", ({ callerId, timeoutMs }: { callerId: string; timeoutMs: number }) => {
       setTossPhase(callerId === s.id ? "calling" : "waiting-call");
       startSimpleCountdown(timeoutMs, setTossCountdown);
@@ -173,7 +262,7 @@ export function useGameSocket() {
       setGameStarted(true);
     });
 
-    // ---------- Rounds ----------
+    /** ---------- Rounds ---------- */
     s.on("move:roundStart", ({ deadlineAt, snapshot }: RoundStartPayload) => {
       const myId = myIdRef.current;
       const oppId = opponentIdRef.current;
@@ -209,7 +298,7 @@ export function useGameSocket() {
         const myId = myIdRef.current;
         const oppId = opponentIdRef.current;
 
-        // Show chosen numbers immediately for visuals; scoring after applyAfterMs
+        // show chosen numbers immediately for visuals; scoring comes after applyAfterMs
         setPlayerMove(moves[myId]);
         setOpponentMove(moves[oppId]);
 
@@ -253,29 +342,7 @@ export function useGameSocket() {
       setGameStarted(!snapshot.gameOver);
     });
 
-    // ---------- Waiting room lifecycle ----------
-    s.on("room:timeout", () => {
-      setWaiting(null);
-      if (waitTimerRef.current) {
-        clearInterval(waitTimerRef.current);
-        waitTimerRef.current = null;
-      }
-    });
-
-    s.on("room:exists", ({ code }: any) => {
-      setWaiting(null);
-      alert(`Room ${code} already exists. Try joining instead.`);
-    });
-    s.on("room:notFound", ({ code }: any) => {
-      setWaiting(null);
-      alert(`Room ${code} not found.`);
-    });
-    s.on("room:full", ({ code }: any) => {
-      setWaiting(null);
-      alert(`Room ${code} is full.`);
-    });
-
-    // ---------- Disconnects ----------
+    /** ---------- Disconnects ---------- */
     s.on("opponent:left", () => {
       setIsGameOver(true);
       setWinner("Opponent left. You win by walkover 🏆");
@@ -288,29 +355,14 @@ export function useGameSocket() {
     return () => {
       s.removeAllListeners();
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
-      if (waitTimerRef.current) clearInterval(waitTimerRef.current);
       clearSearchTimers();
+      clearRoomExpiryTimer();
+      prevPlayerIdsRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** ================== helpers ================== */
-  const setWaitingWithExpiry = (code: string, expiresAt: number) => {
-    setWaiting({ code, expiresAt });
-    setRoomCode(code);
-    if (waitTimerRef.current) clearInterval(waitTimerRef.current);
-    const tick = () => {
-      const ms = Math.max(0, expiresAt - Date.now());
-      setWaitCountdown(Math.ceil(ms / 1000));
-      if (ms <= 0 && waitTimerRef.current) {
-        clearInterval(waitTimerRef.current);
-        waitTimerRef.current = null;
-      }
-    };
-    tick();
-    waitTimerRef.current = window.setInterval(tick, 250);
-  };
-
   const startSimpleCountdown = (ms: number, setter: (n: number) => void) => {
     const total = Math.ceil(ms / 1000);
     setter(total);
@@ -330,6 +382,17 @@ export function useGameSocket() {
       if (left <= 0) clearInterval(int);
     }, 250);
     return int;
+  };
+
+  const resetRoomMeta = () => {
+    setRoomCode(null);
+    setRoomPlayers([]);
+    setRoomHostId(null);
+    setRoomExpiresAt(null);
+    setRoomExpireSeconds(null);
+    clearRoomExpiryTimer();
+    setMode(null);
+    setRoomId(null);
   };
 
   /** ================== Quick Match timer control ================== */
@@ -394,32 +457,37 @@ export function useGameSocket() {
   };
 
   /** ================== actions (private room) ================== */
-  const hostRoom = async (codeArg?: string): Promise<string> => {
-    const code = (codeArg ?? genCode()).toUpperCase();
+  const createRoom = async () => {
+    const c = genCode();
+    try {
+      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(c);
+    } catch {}
     setMode("player");
-    setIsHost(true);
-    setWaitingWithExpiry(code, Date.now() + 60_000); // optimistic until server confirms
-    try { await navigator?.clipboard?.writeText(code); } catch {}
-    socketRef.current?.emit("room:create", { code, name: myName });
-    return code;
+    socketRef.current?.emit("room:create", { code: c, name: myName });
   };
 
-  const joinRoom = (codeRaw: string) => {
-    const code = codeRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (code.length < 4 || code.length > 8) {
+  const joinRoomByCode = (code: string) => {
+    const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (c.length < 4 || c.length > 8) {
       alert("Enter a 4–8 character code");
       return;
     }
     setMode("player");
-    setIsHost(false);
-    // optimistic 45s until server sends real expiresAt
-    setWaitingWithExpiry(code, Date.now() + 45_000);
-    socketRef.current?.emit("room:joinByCode", { code, name: myName });
+    socketRef.current?.emit("room:joinByCode", { code: c, name: myName });
   };
 
-  const cancelWaiting = (code: string) => {
-    socketRef.current?.emit("room:leave", { code });
-    setWaiting(null);
+  const copyRoomCode = async () => {
+    if (!roomCode) return;
+    try {
+      await navigator.clipboard.writeText(roomCode);
+      setJoinSnackbar("Room code copied");
+      setTimeout(() => setJoinSnackbar(null), 1500);
+    } catch {}
+  };
+
+  const startRoomGame = () => {
+    if (!roomId) return;
+    socketRef.current?.emit("room:startGame", { roomId });
   };
 
   /** ================== actions (toss) ================== */
@@ -430,11 +498,7 @@ export function useGameSocket() {
     socketRef.current?.emit("toss:choose", { roomId: rid, choice });
   };
 
-  /** ================== actions (start match / moves) ================== */
-  const startMatch = (rid: string) => {
-    socketRef.current?.emit("room:start", { roomId: rid });
-  };
-
+  /** ================== actions (move) ================== */
   const playMultiplayerMove = (rid: string, move: number) => {
     if (hasPickedThisRound || !roundDeadline || Date.now() > roundDeadline) return;
     socketRef.current?.emit("move:select", { roomId: rid, move });
@@ -450,27 +514,35 @@ export function useGameSocket() {
     return out;
   };
 
+  const isHost = (roomHostId && (socketRef.current?.id || "")) ? roomHostId === socketRef.current?.id : false;
+  const roomReady = roomPlayers.length === 2 && !gameStarted && tossPhase === "idle";
+
   return {
     // identity
     myName,
     opponent,
     roomId,
-    // lobby
+
+    // lobby (quick match)
     mode,
     searching,
     searchTime,
     searchError,
     startQuickMatch,
     cancelQuickMatch,
-    // private rooms
-    waiting,
-    waitCountdown,
-    cancelWaiting,
+
+    // room (private)
+    createRoom,
+    joinRoomByCode,
     roomCode,
-    roster,
+    roomPlayers,
+    roomHostId,
+    roomReady,
     isHost,
-    hostRoom,
-    joinRoom,
+    roomExpireSeconds,
+    copyRoomCode,
+    startRoomGame,
+
     // game state
     gameStarted,
     inning,
@@ -483,6 +555,7 @@ export function useGameSocket() {
     isGameOver,
     winner,
     secondInningStarted,
+
     // toss
     tossPhase,
     tossCountdown,
@@ -492,8 +565,12 @@ export function useGameSocket() {
     iChooseCountdown,
     callHeadsOrTails,
     chooseBatOrBowl,
+
     // actions
-    startMatch,
     playMultiplayerMove,
+
+    // snackbar
+    joinSnackbar,
+    setJoinSnackbar,
   };
 }

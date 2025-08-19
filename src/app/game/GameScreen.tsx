@@ -15,8 +15,9 @@ import InningsOverlay from "@/components/game/overlays/InningsOverlay";
 import GameOverModal from "@/components/game/overlays/GameOverModal";
 
 import GameBoard from "@/components/game/board/GameBoard";
+import RoomBanner from "@/components/game/room/RoomBanner";
+import Snackbar from "@/components/ui/Snackbar";
 
-/* Prevent static prerender issues */
 export const revalidate = 0;
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
@@ -33,19 +34,14 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 function GameScreenInner() {
-  // Redirect if not logged in (runs client-side)
   useAuthGuard("/login?next=/game");
 
-  /**
-   * Multiplayer (socket) state
-   */
   const {
-    // identity & room
     myName,
     opponent,
     roomId,
 
-    // quick match lobby
+    // Quick match
     mode,
     searching,
     searchTime,
@@ -53,7 +49,17 @@ function GameScreenInner() {
     startQuickMatch,
     cancelQuickMatch,
 
-    // multiplayer game
+    // Room (new)
+    roomCode,
+    roomPlayers,
+    roomHostId,
+    roomReady,
+    isHost,
+    roomExpireSeconds,
+    copyRoomCode,
+    startRoomGame,
+
+    // Game (MP)
     gameStarted,
     inning,
     score,
@@ -66,7 +72,7 @@ function GameScreenInner() {
     winner,
     secondInningStarted,
 
-    // toss
+    // Toss
     tossPhase,
     tossCountdown,
     tossCall,
@@ -76,13 +82,14 @@ function GameScreenInner() {
     callHeadsOrTails,
     chooseBatOrBowl,
 
-    // actions
+    // Snackbar
+    joinSnackbar,
+    setJoinSnackbar,
+    // Actions
     playMultiplayerMove,
   } = useGameSocket();
 
-  /**
-   * Bot (solo) game state
-   */
+  // Bot (solo)
   const {
     isBotMode,
     startBotGame,
@@ -100,7 +107,7 @@ function GameScreenInner() {
     playBotMove,
   } = useBotGame(myName);
 
-  /* ---------- Merge active state by mode ---------- */
+  // Merge
   const activeInning = isBotMode ? botInning : inning;
   const activeScore = isBotMode ? botScore : score;
   const activePlayerMove = isBotMode ? botPlayerMove : playerMove;
@@ -109,34 +116,40 @@ function GameScreenInner() {
   const activeWinner = isBotMode ? botWinner : winner;
   const activeRoundCountdown = isBotMode ? 0 : roundDeadline ? roundCountdown : 0;
   const activeOpponentName = isBotMode ? botOpponentName : (opponent || "Opponent");
+  const canPick = isBotMode ? botCanPick : !activeGameOver && !hasPickedThisRound;
 
-  // ui lock: MP is locked after pick until server applyAfterMs; Bot uses hook-provided lock
-  const canPick =
-    isBotMode ? botCanPick : !activeGameOver && !hasPickedThisRound;
+  const preGameInRoom = !gameStarted && !isBotMode && !!roomCode;
 
   return (
     <div className="min-h-[100svh] bg-gray-950 text-white relative">
-      {/* Background (mobile-first scale) */}
+      {/* BG */}
       <div className="pointer-events-none absolute -top-16 left-1/2 -translate-x-1/2 h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(closest-side,_rgba(34,197,94,.18),_transparent)] sm:h-[36rem] sm:w-[36rem] md:h-[42rem] md:w-[42rem]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,.05)_1px,transparent_1px)] bg-[size:36px_36px] sm:bg-[size:42px_42px]" />
 
-      {/* Page padding (safe-area aware) */}
-      <div
-        className="mx-auto w-full max-w-7xl px-4 sm:px-6 pt-12 sm:pt-16 pb-20"
-        style={{ paddingBottom: "max(5rem, calc(5rem + env(safe-area-inset-bottom)))" }}
-      >
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 pt-12 sm:pt-16 pb-20" style={{ paddingBottom: "max(5rem, calc(5rem + env(safe-area-inset-bottom)))" }}>
         {/* Header */}
         <div className="flex flex-col items-center text-center">
-          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
-            Play ThumbBat
-          </h1>
-          <p className="mt-2 text-sm sm:text-base text-white/70">
-            Quick match, private room, or solo vs bot.
-          </p>
+          <h1 className="text-2xl xs:text-3xl sm:text-4xl font-extrabold tracking-tight">Play ThumbBat</h1>
+          <p className="mt-2 text-sm sm:text-base text-white/70">Quick match, private room, or solo vs bot.</p>
         </div>
 
-        {/* Lobby (stack on mobile). Private room creation/join now navigates to /room/... */}
-        {!gameStarted && !isBotMode && (
+        {/* Room banner (pre-game in code room) */}
+        {preGameInRoom && (
+          <div className="mt-6">
+            <RoomBanner
+              code={roomCode}
+              players={roomPlayers}
+              isHost={isHost}
+              canStart={roomReady}
+              expireSeconds={roomExpireSeconds}
+              onCopy={copyRoomCode}
+              onStart={startRoomGame}
+            />
+          </div>
+        )}
+
+        {/* Lobby cards (hidden if you’re in a room pre-game) */}
+        {!preGameInRoom && !gameStarted && !isBotMode && (
           <div className="mt-6 sm:mt-8 grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <QuickMatchCard
               searching={searching}
@@ -145,17 +158,16 @@ function GameScreenInner() {
               onStart={startQuickMatch}
               onCancel={cancelQuickMatch}
             />
-            {/* New card navigates to /room routes; no props needed */}
-            <JoinRoomCard />
-            <SoloPracticeCard
-              onStart={() => {
-                startBotGame();
-              }}
+            <JoinRoomCard
+              myName={myName}
+              onJoin={(code) => /* join -> room banner takes over */ null || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || (() => joinRoomByCode(code))}
+              onCreate={() => /* create -> room banner takes over */ null || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || (() => createRoom())}
             />
+            <SoloPracticeCard onStart={() => startBotGame()} />
           </div>
         )}
 
-        {/* Toss overlays (multiplayer only, pre-game) */}
+        {/* Toss overlays (MP only, pre-game) */}
         {!isBotMode &&
           !gameStarted &&
           tossPhase !== "idle" &&
@@ -173,7 +185,7 @@ function GameScreenInner() {
             />
           )}
 
-        {/* Game board (comfortable width on mobile) */}
+        {/* Game board */}
         {gameStarted || isBotMode ? (
           <div className="mt-6 sm:mt-10">
             <div className="mx-auto w-full max-w-[720px]">
@@ -194,7 +206,6 @@ function GameScreenInner() {
                     playMultiplayerMove(roomId, move);
                   }
                 }}
-                /* ✅ Correct precedence: choose bot or MP flag correctly */
                 secondInningStarted={isBotMode ? botSecondInnings : secondInningStarted}
               />
             </div>
@@ -202,7 +213,7 @@ function GameScreenInner() {
         ) : null}
       </div>
 
-      {/* Innings overlay (bot controls it; MP uses server-driven overlays) */}
+      {/* Innings overlay */}
       <InningsOverlay
         open={!!showInningsOverlay}
         firstInningsScore={activeScore.firstInningScore}
@@ -236,11 +247,11 @@ function GameScreenInner() {
         userScore={activeScore.user}
         opponentScore={activeScore.opponent}
         onExit={() => (window.location.href = "/")}
-        onRestart={() => {
-          // Quick rematch in bot mode
-          startBotGame();
-        }}
+        onRestart={() => startBotGame()}
       />
+
+      {/* Join snackbar */}
+      <Snackbar message={joinSnackbar} open={!!joinSnackbar} />
     </div>
   );
 }
@@ -248,7 +259,6 @@ function GameScreenInner() {
 export default function GameScreen() {
   return (
     <ClientOnly>
-      {/* Wrap anything that uses suspenseful hooks */}
       <Suspense
         fallback={
           <div className="min-h-[100svh] bg-gray-950 text-white grid place-items-center">
