@@ -18,8 +18,6 @@ import GameBoard from "@/components/game/board/GameBoard";
 import RoomBanner from "@/components/game/room/RoomBanner";
 import Snackbar from "@/components/ui/Snackbar";
 
-export const revalidate = 0;
-
 function ClientOnly({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -87,6 +85,9 @@ function GameScreenInner() {
     setJoinSnackbar,
     // Actions
     playMultiplayerMove,
+    // Join/create actions
+    createRoom,
+    joinRoomByCode,
   } = useGameSocket();
 
   // Bot (solo)
@@ -160,8 +161,8 @@ function GameScreenInner() {
             />
             <JoinRoomCard
               myName={myName}
-              onJoin={(code) => /* join -> room banner takes over */ null || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || (() => joinRoomByCode(code))}
-              onCreate={() => /* create -> room banner takes over */ null || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || undefined || (() => createRoom())}
+              onJoin={(code) => joinRoomByCode(code)}
+              onCreate={() => createRoom()}
             />
             <SoloPracticeCard onStart={() => startBotGame()} />
           </div>
@@ -256,7 +257,7 @@ function GameScreenInner() {
   );
 }
 
-export default function GameScreen() {
+export default function GameScreenClient() {
   return (
     <ClientOnly>
       <Suspense
