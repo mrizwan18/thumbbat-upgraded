@@ -2,6 +2,7 @@
 
 import React, { Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useRouter } from "next/navigation";                 // ⬅️ add
 import { useAuthGuard } from "@/src/hooks/useAuthGuard";
 import { useGameSocket } from "@/src/hooks/useGameSocket";
 import { useBotGame } from "@/src/hooks/useBotGame";
@@ -33,6 +34,7 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 
 function GameScreenInner() {
   useAuthGuard("/login?next=/game");
+  const router = useRouter();                                   // ⬅️ add
 
   const {
     myName,
@@ -48,7 +50,7 @@ function GameScreenInner() {
     cancelQuickMatch,
 
     // Room (new)
-    roomCode,
+    roomCode,                   
     roomPlayers,
     roomHostId,
     roomReady,
@@ -83,10 +85,12 @@ function GameScreenInner() {
     // Snackbar
     joinSnackbar,
     setJoinSnackbar,
+
     // Actions
     playMultiplayerMove,
+
     // Join/create actions
-    createRoom,
+    createRoom,                 // prefer this to return Promise<string>
     joinRoomByCode,
   } = useGameSocket();
 
@@ -159,11 +163,21 @@ function GameScreenInner() {
               onStart={startQuickMatch}
               onCancel={cancelQuickMatch}
             />
+
             <JoinRoomCard
               myName={myName}
-              onJoin={(code) => joinRoomByCode(code)}
-              onCreate={() => createRoom()}
+              onJoin={async (code) => {
+                await joinRoomByCode(code);          // socket join
+                router.push(`/room/join/${code}`);    // navigate to room route
+              }}
+              onCreate={async () => {
+                // Prefer createRoom(): Promise<string>; if not, fall back to state
+                const created = (await (createRoom() as unknown)) as string | void;
+                const c = (typeof created === "string" && created) || roomCode;
+                if (c) router.push(`/room/create/${c}`);
+              }}
             />
+
             <SoloPracticeCard onStart={() => startBotGame()} />
           </div>
         )}

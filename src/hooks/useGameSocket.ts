@@ -457,13 +457,19 @@ export function useGameSocket() {
   };
 
   /** ================== actions (private room) ================== */
-  const createRoom = async () => {
+  const createRoom = async (): Promise<string> => {
     const c = genCode();
     try {
       if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(c);
     } catch {}
     setMode("player");
+    // keep your existing socket emit
     socketRef.current?.emit("room:create", { code: c, name: myName });
+  
+    // (optional) store for RoomBanner
+    setRoomCode?.(c);            // if you track roomCode in this hook
+  
+    return c;                    // <-- important
   };
 
   const joinRoomByCode = (code: string) => {
