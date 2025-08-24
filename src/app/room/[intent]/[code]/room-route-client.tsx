@@ -21,7 +21,7 @@ export default function RoomRouteClient({
 
   const {
     // room controls
-    createRoomWithCode,
+    createRoom,
     joinRoomByCode,
     roomCode,
     roomPlayers,
@@ -68,10 +68,12 @@ export default function RoomRouteClient({
 
   // Kick off create/join once on mount
   useEffect(() => {
-    const safeCode = (code || "").toUpperCase();
-    if (!safeCode) return;
-    if (intent === "create") createRoomWithCode(safeCode);
-    else joinRoomByCode(safeCode);
+    if (intent === "create") {
+      createRoom(); // will generate + emit, server responds with room:waiting
+    } else if (intent === "join") {
+      const safeCode = (code || "").toUpperCase();
+      if (safeCode) joinRoomByCode(safeCode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intent, code]);
 
@@ -88,7 +90,9 @@ export default function RoomRouteClient({
 
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 pt-12 sm:pt-16 pb-20">
         <div className="flex flex-col items-center text-center">
-          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">Private Room</h1>
+          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
+            Private Room
+          </h1>
           <p className="mt-2 text-sm sm:text-base text-white/70">
             Share the code and wait for your friend to join.
           </p>
@@ -108,7 +112,7 @@ export default function RoomRouteClient({
           </div>
         )}
 
-        {/* Toss overlays (pre-game) */}
+        {/* Toss overlays */}
         {!gameStarted &&
           tossPhase !== "idle" &&
           tossPhase !== "done" && (
@@ -125,7 +129,7 @@ export default function RoomRouteClient({
             />
           )}
 
-        {/* Game */}
+        {/* Game board */}
         {gameStarted ? (
           <div className="mt-6 sm:mt-10">
             <div className="mx-auto w-full max-w-[720px]">
@@ -164,7 +168,6 @@ export default function RoomRouteClient({
         opponentScore={score.opponent}
         onExit={() => (window.location.href = "/")}
         onRestart={() => {
-          // In a room, restarting = create a new room or re-join
           setJoinSnackbar("Create a new room to play again");
           setTimeout(() => setJoinSnackbar(null), 2000);
         }}
