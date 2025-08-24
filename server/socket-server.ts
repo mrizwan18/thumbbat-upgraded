@@ -22,7 +22,7 @@ const ROUND_TIMEOUT_MS = 15000;     // 15s to pick a move
 const CLIENT_ANIMATION_MS = 1500;   // clients animate, then apply snapshot
 const DISCONNECT_GRACE_MS = 20000;  // 20s to reconnect before walkover
 
-const ROOM_WAIT_MS = 60_000;        // private room: 60s to find second player
+const ROOM_WAIT_MS = 300_000;        // private room: 5 minutes to find second player
 
 const codeToRoomId = new Map<string, string>(); // code -> roomId
 
