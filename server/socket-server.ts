@@ -642,6 +642,19 @@ io.on("connection", (socket: Socket) => {
       return;
     }
 
+    const joiningUserId = userIdMap.get(socket.id);
+    if (joiningUserId) {
+      const isAlreadyInRoom = room.players.some(playerSocketId => {
+        const existingPlayerUserId = userIdMap.get(playerSocketId);
+        return existingPlayerUserId && existingPlayerUserId === joiningUserId;
+      });
+
+      if (isAlreadyInRoom) {
+        safeEmit(socket.id, "room:alreadyIn", { code, roomId });
+        return;
+      }
+    }
+
     const name =
       (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`).toString();
 
