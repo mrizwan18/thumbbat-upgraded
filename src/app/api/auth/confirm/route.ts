@@ -6,8 +6,8 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { withDb } from "@/src/utils/withDb";
-import User from "@/server/models/User";
-import VerificationToken from "@/server/models/VerificationToken";
+import User from "@/src/models/User";
+import VerificationToken from "@/src/models/VerificationToken";
 
 // ---- CORS helpers (unchanged) ----
 function corsHeaders() {

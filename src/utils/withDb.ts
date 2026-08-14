@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import dbConnect from "@/server/config/db";
+import dbConnect from "@/src/lib/db";
 
 type RouteHandler = (
   request: Request,

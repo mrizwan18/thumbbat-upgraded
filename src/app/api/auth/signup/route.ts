@@ -8,9 +8,9 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Resend } from "resend";
 
-import User from "@/server/models/User";
-import VerificationToken from "@/server/models/VerificationToken";
-import dbConnect from "@/server/config/db";
+import User from "@/src/models/User";
+import VerificationToken from "@/src/models/VerificationToken";
+import dbConnect from "@/src/lib/db";
 
 let resendClient: Resend | null = null;
 function getResend() {
