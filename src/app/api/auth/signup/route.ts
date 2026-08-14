@@ -1,3 +1,8 @@
+/**
+ * @deprecated Email/password signup is no longer used — ThumbBat now
+ * only supports Google sign-in (see /api/auth/google). Left in place
+ * rather than deleted; do not build new features on this path.
+ */
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -7,7 +12,11 @@ import User from "@/server/models/User";
 import VerificationToken from "@/server/models/VerificationToken";
 import dbConnect from "@/server/config/db";
 
-const resend = new Resend(process.env.RESEND_API_KEY!);
+let resendClient: Resend | null = null;
+function getResend() {
+  if (!resendClient) resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+}
 const FROM_EMAIL = process.env.EMAIL_FROM || "cs@thumbbat.fun";
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -72,7 +81,7 @@ export const POST = async (request: Request) => {
     const confirmationUrl = `${baseUrl}/confirm?token=${tokenPlain}`;
 
     // Send email (Resend)
-    await resend.emails.send({
+    await getResend().emails.send({
       from: FROM_EMAIL,
       to: email,
       subject: "Confirm your ThumbBat account",

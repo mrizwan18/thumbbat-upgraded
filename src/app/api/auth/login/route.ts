@@ -1,3 +1,8 @@
+/**
+ * @deprecated Username/password login is no longer used — ThumbBat now
+ * only supports Google sign-in (see /api/auth/google). Left in place
+ * rather than deleted; do not build new features on this path.
+ */
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";

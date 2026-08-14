@@ -1,4 +1,9 @@
 // server/models/VerificationToken.ts
+/**
+ * @deprecated Only used by the deprecated email/password signup +
+ * confirmation flow (src/app/api/auth/{signup,confirm}) — ThumbBat now
+ * only supports Google sign-in. Left in place rather than deleted.
+ */
 import mongoose, { Schema, Types } from "mongoose";
 
 const VerificationTokenSchema = new Schema({

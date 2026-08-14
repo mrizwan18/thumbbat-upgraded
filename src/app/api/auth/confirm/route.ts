@@ -1,3 +1,8 @@
+/**
+ * @deprecated Email/password signup + confirmation is no longer used —
+ * ThumbBat now only supports Google sign-in (see /api/auth/google). Left
+ * in place rather than deleted; do not build new features on this path.
+ */
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { withDb } from "@/src/utils/withDb";
