@@ -1,22 +1,5 @@
 services:
   - type: web
-    name: thumbbat-web
-    env: node
-    rootDir: .
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start
-    autoDeploy: true
-    envVars:
-      - key: NODE_ENV
-        value: production
-      # This injects the socket service URL at build time
-      - key: NEXT_PUBLIC_SOCKET_URL
-        fromService:
-          type: web
-          name: thumbbat-socket
-          property: host
-
-  - type: web
     name: thumbbat-socket
     env: node
     rootDir: server
@@ -27,12 +10,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Allow only the web origin in CORS (the host is injected)
-      - key: WEB_ORIGIN
-        fromService:
-          type: web
-          name: thumbbat-web
-          property: host
+      # WEB_ORIGIN intentionally omitted: no thumbbat-web service is
+      # deployed on Render (the real client is Unity, which is not
+      # subject to browser CORS at all). Add this var with a real origin
+      # if a browser-based frontend is ever deployed separately; until
+      # then the server logs a warning and falls back to allow-all CORS
+      # (see server/socket-server.ts) rather than failing closed.
       - key: MONGODB_URI
         sync: false
       - key: MONGODB_DB
