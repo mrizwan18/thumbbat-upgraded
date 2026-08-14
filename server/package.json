@@ -3,14 +3,13 @@
     "version": "1.0.0",
     "private": true,
     "main": "dist/socket-server.js",
-    "type": "commonjs",
     "scripts": {
         "build": "tsc -p tsconfig.json",
         "start": "node --enable-source-maps dist/socket-server.js",
         "dev": "ts-node --transpile-only socket-server.ts"
     },
     "engines": {
-        "node": ">=18"
+        "node": ">=22.0.0 <23.0.0"
     },
     "dependencies": {
         "cors": "^2.8.5",

@@ -13,6 +13,32 @@ import User from "./models/User";
 
 dotenv.config({ path: path.resolve(process.cwd(), "server/.env") });
 
+/**
+ * Last-resort safety net — NOT a substitute for the payload validation
+ * added to every socket handler below (that's the actual fix for the
+ * malformed-packet crash risk this audit found). This only exists to
+ * contain whatever bug validation didn't anticipate.
+ *
+ * uncaughtException: Node's own guidance is that continuing after one is
+ * unsafe — in-memory state (rooms/game/round Maps) may be inconsistent in
+ * ways nothing here can verify. Log and exit(1) so the host (Render/pm2)
+ * restarts into a clean process; the cost is one dropped match, not a
+ * silently-corrupted server staying up for everyone else.
+ * unhandledRejection: every current async path (persistMatch, me:setUser)
+ * already wraps its own body in try/catch, so this should never fire in
+ * practice — it's logged only, not treated as fatal, since a stray
+ * rejection here is not evidence the in-memory game state is compromised
+ * the way a synchronous uncaught exception would be.
+ */
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught exception — exiting for a clean restart:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled promise rejection:", reason);
+});
+
 /** ---- Constants ---- */
 const TOSS_CALL_TIMEOUT_MS = 15000;
 const CHOICE_TIMEOUT_MS = 15000;
@@ -82,19 +108,63 @@ const userIdMap = new Map<PlayerId, string | null>();
 const app = express();
 const httpServer = createServer(app);
 
+const isProduction = process.env.NODE_ENV === "production";
+
+/**
+ * CORS origin: restricted to the configured web origin per environment.
+ * WEB_ORIGIN is injected by render.yaml in production (the web service's
+ * own host, no scheme). DEV_FRONTEND_URL covers local development. Neither
+ * being set falls back to allow-all with a one-time warning rather than
+ * crashing or silently blocking every browser client — this only affects
+ * browser-based clients (the Next.js web app); Unity's native WebSocket
+ * client is not subject to browser CORS at all and is unaffected either way.
+ */
+function normalizeOrigin(value: string | undefined, fallbackScheme: "http" | "https"): string | undefined {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return undefined;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `${fallbackScheme}://${trimmed}`;
+}
+
+const configuredOrigin = isProduction
+  ? normalizeOrigin(process.env.WEB_ORIGIN, "https")
+  : normalizeOrigin(process.env.DEV_FRONTEND_URL, "http");
+
+let corsOrigin: string | boolean;
+if (configuredOrigin) {
+  corsOrigin = configuredOrigin;
+} else {
+  console.warn(
+    `⚠️ No ${isProduction ? "WEB_ORIGIN" : "DEV_FRONTEND_URL"} configured — ` +
+    "CORS is falling back to allow-all. Set it before deploying to production."
+  );
+  corsOrigin = true;
+}
+
 /** Express CORS */
 app.use(
   cors({
-    origin: true,
+    origin: corsOrigin,
     methods: ["GET", "POST"],
     credentials: true,
   })
 );
 
+/**
+ * Health check: reports whether the Node process itself is alive.
+ * Deliberately does not depend on MongoDB — gameplay already runs without
+ * it (see dbConnect's error handling below), so a Mongo outage should not
+ * also fail the platform's liveness/health check for this service.
+ * No authentication — this is the same convention render.yaml's
+ * healthCheckPath already expects, and health probes aren't user-facing.
+ */
+app.get("/healthz", (_req, res) => {
+  res.status(200).send("ok");
+});
+
 /** Socket.IO */
 const io = new Server(httpServer, {
   cors: {
-    origin: true,
+    origin: corsOrigin,
     methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -132,6 +202,21 @@ function safeEmit(target: PlayerId | PlayerId[], event: string, payload: any) {
 
 function peerOf(room: RoomState, sid: PlayerId) {
   return room.players.find((p) => p !== sid)!;
+}
+
+/**
+ * Every socket event handler below reads this before touching any field on
+ * its payload. Socket.IO does not guarantee an event arrives with the
+ * shape (or even the presence) of the argument a handler expects — a
+ * malformed client, a version mismatch, or a stray `emit(event)` with no
+ * payload at all would otherwise throw synchronously inside the handler.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function codeIsValid(code: string) {
@@ -513,26 +598,28 @@ io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
   /** ---- Names / Identity ---- */
-  socket.on("me:setName", (name: string) => {
-    const trimmed = (name || "").toString().trim();
+  socket.on("me:setName", (name: unknown) => {
+    const trimmed = (asString(name) || "").trim();
     nameMap.set(socket.id, trimmed || `Player-${socket.id.slice(0, 4)}`);
   });
 
-  socket.on("me:setUser", async (p: { userId?: string; name?: string }) => {
+  socket.on("me:setUser", async (p: unknown) => {
+    if (!isRecord(p)) return;
     try {
-      const id = (p.userId || "").toString();
+      const id = asString(p.userId) || "";
+      const name = asString(p.name);
       if (id && mongoose.isValidObjectId(id)) {
         const u = await User.findById(id).select("_id username");
         if (u) {
           userIdMap.set(socket.id, u._id.toString());
-          nameMap.set(socket.id, p.name || u.username || `Player-${socket.id.slice(0, 4)}`);
+          nameMap.set(socket.id, name || u.username || `Player-${socket.id.slice(0, 4)}`);
         } else {
           userIdMap.set(socket.id, null);
-          if (p.name) nameMap.set(socket.id, p.name);
+          if (name) nameMap.set(socket.id, name);
         }
       } else {
         userIdMap.set(socket.id, null);
-        if (p.name) nameMap.set(socket.id, p.name);
+        if (name) nameMap.set(socket.id, name);
       }
     } catch {
       userIdMap.set(socket.id, null);
@@ -553,8 +640,12 @@ io.on("connection", (socket: Socket) => {
   });
 
   /** ---- Create a private room by code (host) ---- */
-  socket.on("room:create", (p: { code: string; name?: string }) => {
-    const code = (p.code || "").toUpperCase();
+  socket.on("room:create", (p: unknown) => {
+    if (!isRecord(p)) {
+      safeEmit(socket.id, "room:error", { code: "", reason: "invalid_payload" });
+      return;
+    }
+    const code = (asString(p.code) || "").toUpperCase();
     if (!codeIsValid(code)) {
       safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
       return;
@@ -566,7 +657,7 @@ io.on("connection", (socket: Socket) => {
 
     const roomId = `code-${crypto.randomUUID()}`;
     const name =
-      (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`).toString();
+      asString(p.name) || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`;
 
     const state: RoomState = {
       id: roomId,
@@ -606,8 +697,12 @@ io.on("connection", (socket: Socket) => {
   });
 
   /** ---- Join a private room by code (guest) ---- */
-  socket.on("room:joinByCode", (p: { code: string; name?: string }) => {
-    const code = (p.code || "").toUpperCase();
+  socket.on("room:joinByCode", (p: unknown) => {
+    if (!isRecord(p)) {
+      safeEmit(socket.id, "room:error", { code: "", reason: "invalid_payload" });
+      return;
+    }
+    const code = (asString(p.code) || "").toUpperCase();
     if (!codeIsValid(code)) {
       safeEmit(socket.id, "room:error", { code, reason: "invalid_code" });
       return;
@@ -656,7 +751,7 @@ io.on("connection", (socket: Socket) => {
     }
 
     const name =
-      (p.name || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`).toString();
+      asString(p.name) || nameMap.get(socket.id) || `Player-${socket.id.slice(0, 4)}`;
 
     room.players.push(socket.id);
     room.names[socket.id] = name;
@@ -685,8 +780,11 @@ io.on("connection", (socket: Socket) => {
   });
 
   /** ---- Start game (host or allow either—here host only) ---- */
-  socket.on("room:startGame", (p: { roomId: string }) => {
-    const room = rooms.get(p.roomId);
+  socket.on("room:startGame", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const roomId = asString(p.roomId);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
     if (!room) return;
 
     const isMember = room.players.includes(socket.id);
@@ -717,8 +815,10 @@ io.on("connection", (socket: Socket) => {
   });
 
   /** ---- Leave a private room before game starts ---- */
-  socket.on("room:leave", (p: { roomId?: string; code?: string }) => {
-    const roomId = p.roomId || (p.code ? codeToRoomId.get((p.code || "").toUpperCase()) : undefined);
+  socket.on("room:leave", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const code = asString(p.code);
+    const roomId = asString(p.roomId) || (code ? codeToRoomId.get(code.toUpperCase()) : undefined);
     if (!roomId) return;
 
     const room = rooms.get(roomId);
@@ -739,44 +839,61 @@ io.on("connection", (socket: Socket) => {
   });
 
   /** ---- Toss events ---- */
-  socket.on("toss:call", (p: { roomId: string; call: TossCall }) => {
-    const room = rooms.get(p.roomId);
+  socket.on("toss:call", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const roomId = asString(p.roomId);
+    const call = asString(p.call);
+    if (!roomId || (call !== "heads" && call !== "tails")) return;
+    const room = rooms.get(roomId);
     if (!room || room.callerId !== socket.id) return;
     if (room.tossCall) return;
-    room.tossCall = p.call;
+    room.tossCall = call;
     resolveToss(room);
   });
 
-  socket.on("toss:choose", (p: { roomId: string; choice: BatOrBowl }) => {
-    const room = rooms.get(p.roomId);
+  socket.on("toss:choose", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const roomId = asString(p.roomId);
+    const choice = asString(p.choice);
+    if (!roomId || (choice !== "bat" && choice !== "bowl")) return;
+    const room = rooms.get(roomId);
     if (!room || room.tossWinnerId !== socket.id) return;
-    finalizeChoice(room, p.choice);
+    finalizeChoice(room, choice);
   });
 
   /** ---- Real-time moves ---- */
-  socket.on("move:select", (p: { roomId: string; move: number }) => {
-    const room = rooms.get(p.roomId);
+  socket.on("move:select", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const roomId = asString(p.roomId);
+    if (!roomId) return;
+    const move = p.move;
+    if (typeof move !== "number" || !Number.isInteger(move) || move < 1 || move > 6) return;
+
+    const room = rooms.get(roomId);
     if (!room || !room.game || !room.round) return;
 
     const r = room.round;
     if (Date.now() > r.deadlineAt) return;
     const isPlayer = room.players.includes(socket.id);
     if (!isPlayer) return;
-    if (p.move < 1 || p.move > 6) return;
     if (r.moves[socket.id] != null) return; // first pick counts
 
-    r.moves[socket.id] = p.move;
+    r.moves[socket.id] = move;
 
     const bothPicked = Object.values(r.moves).every((m) => m != null);
     if (bothPicked) finalizeRound(room, "bothSelected");
   });
 
   /** ---- Resume support ---- */
-  socket.on("resume:join", (p: { roomId: string; token: string; name?: string }) => {
-    const room = rooms.get(p.roomId);
+  socket.on("resume:join", (p: unknown) => {
+    if (!isRecord(p)) return;
+    const roomId = asString(p.roomId);
+    const token = asString(p.token);
+    if (!roomId || !token) return;
+    const room = rooms.get(roomId);
     if (!room) return;
 
-    const match = Object.entries(room.tokens).find(([, tok]) => tok === p.token);
+    const match = Object.entries(room.tokens).find(([, tok]) => tok === token);
     if (!match) {
       safeEmit(socket.id, "resume:failed", { reason: "invalid_token_or_room" });
       return;
@@ -792,7 +909,7 @@ io.on("connection", (socket: Socket) => {
     }
 
     const newName =
-      (p.name || room.names[oldPlayerId] || `Player-${socket.id.slice(0, 4)}`).toString();
+      asString(p.name) || room.names[oldPlayerId] || `Player-${socket.id.slice(0, 4)}`;
     nameMap.set(socket.id, newName);
     room.names[socket.id] = newName;
 
