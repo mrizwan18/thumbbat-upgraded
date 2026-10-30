@@ -59,7 +59,7 @@ export default function JoinRoomCard({ myName, onJoin, onCreate }: Props) {
 
       <div className="mt-4 flex flex-col sm:flex-row gap-3">
         <input
-          inputMode="latin"
+          inputMode="text"
           autoCapitalize="characters"
           autoCorrect="off"
           spellCheck={false}
