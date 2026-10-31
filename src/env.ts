@@ -10,6 +10,7 @@ const envSchema = z.object({
     (val) => (val === "true" ? true : val === "false" ? false : val),
     z.boolean()
   ),
+  NEXT_PUBLIC_GOOGLE_CLIENT_ID: z.string().min(1),
 });
 
 export const env = envSchema.parse({
@@ -19,4 +20,5 @@ export const env = envSchema.parse({
   DEV_FRONTEND_URL: process.env.DEV_FRONTEND_URL,
   PROD_FRONTEND_URL: process.env.PROD_FRONTEND_URL,
   NEXT_PUBLIC_FILTER_USERNAME: process.env.NEXT_PUBLIC_FILTER_USERNAME,
+  NEXT_PUBLIC_GOOGLE_CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
 });

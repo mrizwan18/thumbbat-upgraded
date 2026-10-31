@@ -3,15 +3,93 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  /* ============================================================
+     ThumbBat design tokens (Sprint 1)
+     Single source of truth for color/radius/shadow values used by
+     the new `tb-*` Tailwind utilities (see tailwind.config.ts).
+     ThumbBat is a fixed dark, game-first identity — these tokens are
+     not swapped by prefers-color-scheme.
+     ============================================================ */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Backgrounds (Sprint 6 — Near-Black Blue) */
+  --tb-bg: #0a0e1a;
+  --tb-bg-deep: #05060c;
+  --tb-bg-elevated: #14122a;
+
+  /* Surfaces (Sprint 6 — Deep Indigo) */
+  --tb-surface: #1e1b3a;
+  --tb-surface-elevated: #262247;
+  --tb-surface-pressed: #14122a;
+
+  /* Borders — violet-tinted per the restrained-violet accent direction */
+  --tb-border: rgba(167, 139, 250, 0.16);
+  --tb-border-subtle: rgba(167, 139, 250, 0.09);
+
+  /* Core palette (Sprint 6 visual-direction lock) */
+  --tb-mint: #6ee7b7;
+  --tb-cyan: #22d3ee;
+  --tb-violet: #a78bfa;
+  --tb-ball-red: #8c3a3a;
+
+  /* Primary (mint) / Secondary (violet) — semantic action colors,
+     repointed to the locked palette. Raw --tb-mint/--tb-cyan/--tb-violet
+     above are for thematic accents (gestures, glow, ball motif); primary/
+     secondary stay the semantic names components already reference. */
+  --tb-primary: var(--tb-mint);
+  --tb-primary-hover: #59d9a6;
+  --tb-primary-pressed: #46c494;
+  --tb-secondary: var(--tb-violet);
+  --tb-secondary-hover: #9575f3;
+
+  /* Semantic */
+  --tb-success: var(--tb-mint);
+  --tb-warning: #f5b942;
+  --tb-danger: #ff6b6b;
+  --tb-danger-hover: #f2555a;
+
+  /* Text */
+  --tb-text-primary: #f5f7fa;
+  --tb-text-secondary: rgba(245, 247, 250, 0.72);
+  --tb-text-muted: rgba(245, 247, 250, 0.48);
+
+  /* Glow tints — rgba color, not a full shadow, so consumers compose the
+     spread/blur they need (see --tb-shadow-button-primary below). */
+  --tb-glow-mint: rgba(110, 231, 183, 0.55);
+  --tb-glow-cyan: rgba(34, 211, 238, 0.5);
+  --tb-glow-violet: rgba(167, 139, 250, 0.45);
+
+  /* Radius */
+  --tb-radius-sm: 0.5rem;
+  --tb-radius-md: 0.875rem;
+  --tb-radius-lg: 1.25rem;
+  --tb-radius-xl: 1.75rem;
+  --tb-radius-pill: 999px;
+
+  /* Shadows */
+  --tb-shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.25);
+  --tb-shadow-elevated: 0 12px 40px rgba(0, 0, 0, 0.35);
+  --tb-shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.55);
+
+  /* Chunky "game button" bevel — a thin inner highlight + a hard bottom
+     edge + a soft contact shadow, standing in for a physical 3D button.
+     The "-primary" pair adds a restrained mint glow on top for the PLAY
+     button specifically. */
+  --tb-shadow-button: 0 1px 0 rgba(255, 255, 255, 0.3) inset, 0 4px 0 rgba(0, 0, 0, 0.35),
+    0 9px 20px rgba(0, 0, 0, 0.4);
+  --tb-shadow-button-pressed: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 1px 0 rgba(0, 0, 0, 0.35),
+    0 3px 8px rgba(0, 0, 0, 0.35);
+  --tb-shadow-button-primary: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 4px 0 rgba(0, 0, 0, 0.35),
+    0 9px 20px rgba(0, 0, 0, 0.4), 0 0 26px 1px var(--tb-glow-mint);
+  --tb-shadow-button-primary-pressed: 0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 1px 0 rgba(0, 0, 0, 0.35), 0 3px 8px rgba(0, 0, 0, 0.35), 0 0 14px 1px var(--tb-glow-mint);
+
+  /* ThumbBat is always dark — point the generic background/foreground
+     vars (used by <body>) at the same fixed tokens instead of toggling
+     with the OS color scheme. Every page already paints its own
+     bg-gray-950 root div over this, so this only removes a light-mode
+     flash edge case; it changes no visible page. */
+  --background: var(--tb-bg);
+  --foreground: var(--tb-text-primary);
 }
 
 @media (min-width: 1024px) {
@@ -72,4 +150,39 @@ body {
 .backdrop-blur-sm {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+}
+
+/* ArenaBackground particle drift (Sprint 6) — pure CSS transform/opacity,
+   GPU-friendly, no canvas. Amplitude is deliberately small ("subtle
+   particles", not a snowstorm). */
+@keyframes tb-particle-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  15% {
+    opacity: var(--tb-particle-opacity, 0.5);
+  }
+  85% {
+    opacity: var(--tb-particle-opacity, 0.5);
+  }
+  100% {
+    transform: translate3d(var(--tb-particle-dx, 6px), var(--tb-particle-dy, -40px), 0);
+    opacity: 0;
+  }
+}
+
+/* Arena light-bloom sweep (Phase 2 — game-client AtmosphereLayer). Opacity
+   only, extremely slow — "restrained ambient movement", not a scanning
+   effect. */
+@keyframes tb-bloom-sweep {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(2%);
+  }
 }

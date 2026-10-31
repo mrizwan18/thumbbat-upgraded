@@ -5,6 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
+import { Menu, X, ChevronDown, LogOut } from "lucide-react";
+import { getButtonClassName } from "@/components/ui/buttonStyles";
+import { popoverPresence, slideDown } from "@/components/ui/motion";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home" },
@@ -92,19 +95,22 @@ export default function Navbar() {
     setIsLoggedIn(false);
   };
 
-  const initial = prefersReducedMotion ? {} : { y: -12, opacity: 0 };
-  const animate = prefersReducedMotion ? {} : { y: 0, opacity: 1 };
-  const transition = { duration: 0.35, ease: "easeOut" };
+  // Explicit no-op override for reduced motion on the nav's own mount
+  // animation (kept as its own check, on top of the app-wide
+  // <MotionConfig reducedMotion="user">, to match the existing precedent
+  // of disabling this entrance animation outright rather than just
+  // softening it).
+  const initial = prefersReducedMotion ? {} : slideDown.initial;
+  const animate = prefersReducedMotion ? {} : slideDown.animate;
 
   return (
     <div className="fixed inset-x-0 top-0 z-50">
       {/* glow line */}
-      <div className="pointer-events-none h-px w-full bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent" />
+      <div className="pointer-events-none h-px w-full bg-gradient-to-r from-transparent via-tb-primary/50 to-transparent" />
       <motion.nav
         initial={initial}
         animate={animate}
-        transition={transition}
-        className="bg-gray-950/70 backdrop-blur-md border-b border-white/10"
+        className="bg-tb-bg-elevated/70 backdrop-blur-md border-b border-tb-border"
         role="navigation"
         aria-label="Main"
       >
@@ -132,7 +138,7 @@ export default function Navbar() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className="relative px-2 py-1 text-sm text-white/80 hover:text-white transition-colors"
+                    className="relative px-2 py-1 text-tb-body text-sm text-tb-text-secondary hover:text-tb-text-primary transition-colors"
                     aria-current={active ? "page" : undefined}
                   >
                     <span>{item.label}</span>
@@ -141,7 +147,7 @@ export default function Navbar() {
                       {active && (
                         <motion.span
                           layoutId="active-underline"
-                          className="absolute -bottom-1 left-0 h-0.5 w-full bg-gradient-to-r from-emerald-400 to-lime-300"
+                          className="absolute -bottom-1 left-0 h-0.5 w-full bg-gradient-to-r from-tb-primary to-tb-secondary"
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
@@ -160,7 +166,7 @@ export default function Navbar() {
                 <>
                   <Link
                     href="/game"
-                    className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-3.5 py-2 text-gray-900 text-sm font-semibold shadow-[0_8px_30px_rgba(16,185,129,.35)] hover:brightness-95 transition-[filter,transform] active:scale-95"
+                    className={getButtonClassName({ variant: "primary", size: "sm" }) + " active:scale-95"}
                   >
                     Play
                   </Link>
@@ -170,23 +176,19 @@ export default function Navbar() {
                     <button
                       ref={userBtnRef}
                       onClick={() => setUserOpen((v) => !v)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2.5 py-2 hover:bg-white/10 transition-colors"
+                      className="inline-flex items-center gap-2 rounded-tb-lg border border-tb-border bg-white/5 px-2.5 py-2 hover:bg-white/10 transition-colors"
                       aria-haspopup="menu"
                       aria-expanded={userOpen}
                       aria-controls="user-menu"
                     >
                       <Avatar name={displayName || "You"} />
-                      <span className="hidden sm:inline text-sm text-white/90">
+                      <span className="hidden sm:inline text-sm text-tb-text-primary">
                         {displayName || "You"}
                       </span>
-                      <svg
-                        className={`h-4 w-4 text-white/70 transition-transform ${userOpen ? "rotate-180" : ""}`}
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
+                      <ChevronDown
+                        className={`h-4 w-4 text-tb-text-secondary transition-transform ${userOpen ? "rotate-180" : ""}`}
                         aria-hidden="true"
-                      >
-                        <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.4a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" />
-                      </svg>
+                      />
                     </button>
 
                     <AnimatePresence>
@@ -194,16 +196,15 @@ export default function Navbar() {
                         <motion.div
                           id="user-menu"
                           ref={userMenuRef}
-                          initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                          transition={{ duration: 0.16 }}
-                          className="absolute right-0 mt-2 w-44 rounded-xl border border-white/10 bg-gray-900/95 backdrop-blur-md shadow-lg p-1.5"
+                          initial={popoverPresence.initial}
+                          animate={popoverPresence.animate}
+                          exit={popoverPresence.exit}
+                          className="absolute right-0 mt-2 w-44 rounded-tb-lg border border-tb-border bg-tb-bg-elevated/95 backdrop-blur-md shadow-tb-elevated p-1.5"
                           role="menu"
                         >
                           <Link
                             href="/profile"
-                            className="block w-full rounded-lg px-3 py-2 text-sm text-white/90 hover:bg-white/5"
+                            className="block w-full rounded-tb-sm px-3 py-2 text-sm text-tb-text-primary hover:bg-white/5"
                             role="menuitem"
                             onClick={() => setUserOpen(false)}
                           >
@@ -211,9 +212,10 @@ export default function Navbar() {
                           </Link>
                           <button
                             onClick={handleLogout}
-                            className="block w-full text-left rounded-lg px-3 py-2 text-sm text-rose-300 hover:bg-white/5"
+                            className="flex w-full items-center gap-2 text-left rounded-tb-sm px-3 py-2 text-sm text-tb-danger hover:bg-white/5"
                             role="menuitem"
                           >
+                            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
                             Logout
                           </button>
                         </motion.div>
@@ -225,7 +227,7 @@ export default function Navbar() {
                 <>
                   <Link
                     href="/login"
-                    className="px-3.5 py-2 rounded-xl bg-emerald-400 text-gray-900 text-sm font-semibold hover:brightness-95 transition-[filter]"
+                    className={getButtonClassName({ variant: "primary", size: "sm" })}
                   >
                     Login or Register
                   </Link>
@@ -235,15 +237,17 @@ export default function Navbar() {
 
             {/* Mobile: hamburger */}
             <button
-              className="md:hidden inline-flex items-center justify-center h-10 w-10 rounded-xl border border-white/10 bg-white/5 text-white/90 hover:bg-white/10 transition-colors"
+              className="md:hidden inline-flex items-center justify-center h-10 w-10 rounded-tb-lg border border-tb-border bg-white/5 text-tb-text-primary hover:bg-white/10 transition-colors"
               onClick={() => setMenuOpen((v) => !v)}
-              aria-label="Open menu"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
               aria-expanded={menuOpen}
               aria-controls="mobile-menu"
             >
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-                <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
-              </svg>
+              {menuOpen ? (
+                <X className="h-5 w-5" aria-hidden="true" />
+              ) : (
+                <Menu className="h-5 w-5" aria-hidden="true" />
+              )}
             </button>
           </div>
         </div>
@@ -254,11 +258,10 @@ export default function Navbar() {
         {menuOpen && (
           <motion.div
             id="mobile-menu"
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.18 }}
-            className="md:hidden bg-gray-950/90 backdrop-blur-md border-b border-white/10"
+            initial={slideDown.initial}
+            animate={slideDown.animate}
+            exit={slideDown.exit}
+            className="md:hidden bg-tb-bg-elevated/90 backdrop-blur-md border-b border-tb-border"
           >
             <div className="mx-auto max-w-7xl px-6 py-4">
               <div className="flex flex-col gap-2">
@@ -268,7 +271,7 @@ export default function Navbar() {
                     <Link
                       key={item.href}
                       href={item.href}
-                      className={`rounded-lg px-3 py-2 text-white/90 hover:bg-white/5 ${
+                      className={`rounded-tb-sm px-3 py-2 text-tb-text-primary hover:bg-white/5 ${
                         active ? "bg-white/5" : ""
                       }`}
                       onClick={() => setMenuOpen(false)}
@@ -279,13 +282,13 @@ export default function Navbar() {
                   );
                 })}
 
-                <div className="mt-2 h-px bg-white/10" />
+                <div className="mt-2 h-px bg-tb-border" />
 
                 {isLoggedIn ? (
                   <div className="flex items-center justify-between gap-2">
                     <Link
                       href="/game"
-                      className="flex-1 inline-flex items-center justify-center rounded-lg bg-emerald-400 px-3 py-2 text-gray-900 font-semibold hover:brightness-95 transition-[filter]"
+                      className={getButtonClassName({ variant: "primary", size: "sm", className: "flex-1" })}
                       onClick={() => setMenuOpen(false)}
                     >
                       Play
@@ -295,8 +298,9 @@ export default function Navbar() {
                         setMenuOpen(false);
                         handleLogout();
                       }}
-                      className="flex-1 rounded-lg border border-white/10 px-3 py-2 text-rose-300 hover:bg-white/5 transition-colors"
+                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-tb-lg border border-tb-border px-3 py-2 text-tb-danger hover:bg-white/5 transition-colors"
                     >
+                      <LogOut className="h-4 w-4" aria-hidden="true" />
                       Logout
                     </button>
                   </div>
@@ -304,7 +308,7 @@ export default function Navbar() {
                   <div className="flex items-center justify-between gap-2">
                     <Link
                       href="/login"
-                      className="flex-1 inline-flex items-center justify-center rounded-lg bg-emerald-400 px-3 py-2 text-gray-900 font-semibold hover:brightness-95 transition-[filter]"
+                      className={getButtonClassName({ variant: "primary", size: "sm", className: "flex-1" })}
                       onClick={() => setMenuOpen(false)}
                     >
                       Login or Register
@@ -331,7 +335,7 @@ function Avatar({ name }: { name: string }) {
     .toUpperCase();
 
   return (
-    <span className="inline-grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-lime-300 text-gray-900 text-xs font-extrabold">
+    <span className="inline-grid h-7 w-7 place-items-center rounded-tb-pill bg-gradient-to-br from-tb-primary to-tb-secondary text-tb-bg-elevated text-xs font-extrabold">
       {initials}
     </span>
   );
